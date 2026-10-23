@@ -32,11 +32,9 @@ export PYTHONUNBUFFERED=1
 
 log() { echo "[bootstrap $(date +%H:%M:%S)] $*" >&2; }
 
-if [ -f /etc/network_turbo ]; then
-  # shellcheck disable=SC1091
-  source /etc/network_turbo || true
-  log "network_turbo 已开启"
-fi
+# 不启用 network_turbo：实测其仅加速 github/huggingface 官方域名，会显著拖慢
+# pip 镜像源（tuna/SJTU/openmmlab）与 hf-mirror.com，而本脚本全部依赖均走国内镜像
+log "network_turbo 保持关闭（镜像源足够快，开启反而拖慢 pip/hf-mirror）"
 
 mkdir -p "${REPO_DIR}"
 cd "${APP_DIR}" 2>/dev/null || { log "缺少 ${APP_DIR}（start_command 应先 git clone 控制台仓库）"; exit 1; }
