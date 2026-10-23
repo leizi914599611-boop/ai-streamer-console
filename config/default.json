@@ -25,12 +25,12 @@
       "provider": "AutoDL",
       "endpoint": "",
       "apiKey": "",
-      "repoUrl": "",
+      "vramMb": 0,
+      "repoUrl": "https://github.com/leizi914599611-boop/ai-streamer-console.git",
       "branch": "main",
       "dataCenter": "westDC3",
       "gpuSpec": "4090D",
       "imageUuid": "",
-      "vramMb": 0,
       "instances": {}
     }
   },
