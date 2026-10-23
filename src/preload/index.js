@@ -101,6 +101,10 @@ contextBridge.exposeInMainWorld('consoleApi', {
     saveImage: (serviceId, imageName) => invoke('cloud:save-image', { serviceId, imageName }),
     images: () => invoke('cloud:images')
   },
+  downloads: {
+    status: () => invoke('download:status'),
+    start: (id) => invoke('download:start', { id })
+  },
   logs: {
     recent: (limit) => invoke('logs:recent', { limit })
   },

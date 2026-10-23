@@ -22,7 +22,7 @@ function wrap(fn) {
  * 主进程 IPC 注册：渲染进程通过 preload 暴露的 consoleApi 调用。
  */
 function registerIpc(ctx) {
-  const { config, logger, services, orchestrator, queue, stream, library, llm, tts, muse, soulx, realtime, interaction, danmuCtl, monitor, voices, cloudDeployer, appDir } = ctx;
+  const { config, logger, services, orchestrator, queue, stream, library, llm, tts, muse, soulx, realtime, interaction, danmuCtl, monitor, voices, cloudDeployer, downloadManager, appDir } = ctx;
 
   ipcMain.handle('app:info', wrap(async () => ({
     appDir,
@@ -136,6 +136,12 @@ function registerIpc(ctx) {
   ipcMain.handle('cloud:release', wrap(async ({ serviceId } = {}) => cloudDeployer.release({ serviceId })));
   ipcMain.handle('cloud:save-image', wrap(async ({ serviceId, imageName } = {}) => cloudDeployer.saveImage({ serviceId, imageName })));
   ipcMain.handle('cloud:images', wrap(async () => cloudDeployer.listImages()));
+
+  ipcMain.handle('download:status', wrap(async () => (downloadManager ? downloadManager.list() : [])));
+  ipcMain.handle('download:start', wrap(async ({ id } = {}) => {
+    if (!downloadManager) throw new Error('下载管理器未初始化');
+    return downloadManager.start(id);
+  }));
 
   ipcMain.handle('logs:recent', wrap(async ({ limit } = {}) => logger.recent(limit || 400)));
 

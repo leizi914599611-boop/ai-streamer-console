@@ -23,6 +23,7 @@ const { GpuLock } = require('./gpu-lock');
 const { SystemMonitor } = require('./system-monitor');
 const { VoiceLibrary } = require('./voice-library');
 const { CloudDeployer } = require('./cloud-deployer');
+const { DownloadManager } = require('./download-manager');
 const { registerIpc } = require('./ipc');
 
 const appDir = path.resolve(__dirname, '..', '..');
@@ -56,6 +57,7 @@ const danmuCtl = new DanmuController({ config, logger, danmu, interaction });
 const monitor = new SystemMonitor({ config, logger, services });
 const voices = new VoiceLibrary({ config, logger, soulx });
 const cloudDeployer = new CloudDeployer({ config, logger });
+const downloadManager = new DownloadManager({ config, logger, services });
 
 let mainWindow = null;
 
@@ -74,6 +76,7 @@ danmuCtl.on('events', (events) => broadcast('danmu', { events }));
 danmuCtl.on('state', (snap) => broadcast('danmuState', snap));
 monitor.on('stats', (snap) => broadcast('system', snap));
 cloudDeployer.on('progress', (payload) => broadcast('cloud', payload));
+downloadManager.on('progress', (payload) => broadcast('download', payload));
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -118,7 +121,7 @@ function createWindow() {
 
 registerIpc({
   config, logger, services, orchestrator, queue, stream, library, llm, tts, muse, soulx, realtime, interaction, danmuCtl,
-  monitor, voices, cloudDeployer, appDir
+  monitor, voices, cloudDeployer, downloadManager, appDir
 });
 
 app.whenReady().then(async () => {

@@ -156,10 +156,46 @@
           </div>
 
           <div class="section-title">
+            <h3>服务依赖下载</h3>
+            <span class="muted">按需下载：仓库 / Python 环境 / 模型权重，就绪后才能本地启动对应服务</span>
+          </div>
+          <div class="panel downloads-panel" id="downloads-panel">
+            <div class="muted">下载清单加载中…</div>
+          </div>
+
+          <div class="section-title">
             <h3>本地能力服务</h3>
             <span class="muted">LatentSync 口型 / SoulX-Singer 歌声合成 / 音色转换</span>
           </div>
           <div class="service-grid" id="service-grid"></div>
+
+          <div class="section-title">
+            <h3>云端（AutoDL）</h3>
+            <span class="muted">账户余额、实例运行情况；选择服务与 GPU 规格即可创建实例并一键部署</span>
+          </div>
+          <div class="panel cloud-overview">
+            <div class="cloud-ov-head">
+              <div class="cloud-ov-balance">账户余额 <b id="ov-cloud-balance">-</b><span class="muted" id="ov-cloud-updated"></span></div>
+              <div class="cloud-ov-tools">
+                <button class="btn tiny ghost" id="btn-ov-cloud-refresh">刷新余额与实例</button>
+              </div>
+            </div>
+            <div class="cloud-ov-instances" id="ov-cloud-instances">
+              <div class="muted">实例信息加载中…</div>
+            </div>
+            <div class="cloud-ov-deploy">
+              <span class="muted">一键部署</span>
+              <select id="ov-deploy-service"></select>
+              <select id="ov-deploy-gpu">
+                <option value="4090D">4090D · 24G（推理首选）</option>
+                <option value="v-48g">4090 · 48G（训练/大模型）</option>
+                <option value="5090-p">5090 · 32G</option>
+              </select>
+              <button class="btn tiny primary" id="btn-ov-deploy">创建实例并部署</button>
+              <span class="muted" id="ov-deploy-hint">首次部署需安装环境，之后可保存为私有镜像</span>
+            </div>
+            <div class="cloud-ov-progress" id="ov-cloud-progress"></div>
+          </div>
 
           <div class="section-title">
             <h3>互动试验台</h3>

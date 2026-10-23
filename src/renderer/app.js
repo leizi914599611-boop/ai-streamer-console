@@ -20,7 +20,9 @@ const state = {
   capabilities: null,
   probes: {},
   busy: {},
-  cloud: { progress: [] }
+  cloud: { progress: [] },
+  downloads: [],
+  cloudStats: { balance: null, instances: [], error: '', updatedAt: 0 }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -100,6 +102,7 @@ function bindNav() {
     if (btn.dataset.view === 'library') refreshLibrary();
     if (btn.dataset.view === 'queue') refreshQueue();
     if (btn.dataset.view === 'models') { refreshVoices(); refreshCapabilities(); }
+    if (btn.dataset.view === 'overview' && Date.now() - state.cloudStats.updatedAt > 30000) refreshCloudOverview();
   });
 
   $('log-tabs').addEventListener('click', (event) => {
@@ -232,7 +235,10 @@ function renderServices() {
     const labelMap = { stopped: '已停止', starting: '启动中', running: '运行中', stopping: '停止中', error: '异常' };
     const isCloud = svc.mode === 'cloud';
     const cloudNoEndpoint = isCloud && !svc.endpoint;
-    const startDisabled = (running || busy) || (isCloud && cloudNoEndpoint);
+    const dl = (state.downloads || []).find((d) => d.serviceId === svc.id);
+    const dlMissing = !isCloud && dl && dl.state !== 'installed';
+    const dlRunning = dlMissing && dl.state === 'running';
+    const startDisabled = (running || busy) || (isCloud && cloudNoEndpoint) || dlMissing;
     const stopDisabled = (isCloud || (!running && svc.status !== 'starting'));
     const openDisabled = cloudNoEndpoint;
     return `
@@ -256,6 +262,7 @@ function renderServices() {
         ${!svc.exists ? `<div class="service-error">入口文件缺失</div>` : ''}
         ${!svc.pythonExists ? `<div class="service-error">Python 解释器缺失</div>` : ''}
         ${cloudNoEndpoint ? `<div class="service-error">请在设置中填写云端 endpoint 后启用</div>` : ''}
+        ${dlMissing ? `<div class="service-error">${dlRunning ? '依赖下载中，请稍候…' : '依赖未下载，请先在上方「服务依赖下载」中下载'}</div>` : ''}
         <div class="service-actions">
           <button class="btn tiny" data-svc="start" data-id="${esc(svc.id)}" ${startDisabled ? 'disabled' : ''}>${isCloud ? '启用云端' : '启动'}</button>
           <button class="btn tiny ghost" data-svc="stop" data-id="${esc(svc.id)}" ${stopDisabled ? 'disabled' : ''}>${isCloud ? '—' : '停止'}</button>
@@ -295,6 +302,207 @@ $('service-grid').addEventListener('click', async (event) => {
   } finally {
     state.busy[id] = false;
     btn.disabled = false;
+  }
+});
+
+/* ================= 按需下载 ================= */
+const DL_STATE_META = {
+  installed: ['已就绪', 'ok'],
+  missing: ['未下载', 'bad'],
+  partial: ['部分缺失', 'warn'],
+  running: ['下载中', 'warn'],
+  error: ['下载失败', 'bad'],
+  done: ['已就绪', 'ok']
+};
+
+async function refreshDownloads() {
+  try {
+    state.downloads = await call(api.downloads.status(), '读取下载状态');
+    renderDownloads();
+    renderServices();
+  } catch (_) { /* ignore */ }
+}
+
+function renderDownloads() {
+  const box = $('downloads-panel');
+  if (!box) return;
+  if (!state.downloads.length) {
+    box.innerHTML = '<div class="muted">下载清单加载中…</div>';
+    return;
+  }
+  box.innerHTML = state.downloads.map((d) => {
+    const [label, kind] = DL_STATE_META[d.state] || [d.state, ''];
+    const chips = d.components.map((c) =>
+      `<span class="dl-chip ${c.ok ? 'ok' : 'miss'}" title="${c.ok ? '已就绪' : esc('缺失: ' + c.missing.join('、'))}">${esc(c.label)}</span>`).join('');
+    const p = d.progress || {};
+    const running = d.state === 'running';
+    const bar = running
+      ? `<div class="dl-progress">
+           <div class="dl-bar"><i style="width:${p.percent || 0}%"></i></div>
+           <span class="dl-line muted">${p.step ? `步骤 ${p.step}/${p.totalSteps} · ` : ''}${esc(p.label || p.line || '下载中…')}</span>
+         </div>`
+      : '';
+    const err = d.state === 'error' ? `<div class="service-error">${esc(d.lastError || '下载失败，详见日志')}</div>` : '';
+    const btn = running
+      ? '<button class="btn tiny" disabled>下载中…</button>'
+      : `<button class="btn tiny ${d.state === 'installed' ? 'ghost' : 'primary'}" data-dl="${esc(d.id)}">${d.state === 'installed' ? '重新下载' : '下载'}</button>`;
+    return `<div class="dl-row" data-id="${esc(d.id)}">
+      <div class="dl-main">
+        <div class="dl-name"><b>${esc(d.name)}</b><span class="dl-state ${kind}">${label}</span></div>
+        <div class="dl-comps">${chips}</div>
+        ${bar}${err}
+      </div>
+      <div class="dl-actions">${btn}</div>
+    </div>`;
+  }).join('');
+}
+
+$('downloads-panel').addEventListener('click', async (event) => {
+  const btn = event.target.closest('button[data-dl]');
+  if (!btn) return;
+  const id = btn.dataset.dl;
+  const item = state.downloads.find((d) => d.id === id);
+  if (item && item.state === 'installed'
+    && !window.confirm(`${item.name} 已就绪，重新下载将重装对应环境（不删除已有权重），确认继续？`)) return;
+  btn.disabled = true;
+  try {
+    await call(api.downloads.start(id), `下载 ${item ? item.name : id}`);
+    toast(`${item ? item.name : id} 下载完成`, 'success');
+  } catch (_) { /* toast 已提示 */ } finally {
+    btn.disabled = false;
+    refreshDownloads();
+    try {
+      state.config = await call(api.config.get(), '读取配置');
+      state.services = await call(api.services.list(), '读取服务');
+      renderServices();
+      renderServiceSettings();
+      renderKpis();
+    } catch (_) { /* ignore */ }
+  }
+});
+
+/* ================= 云端（AutoDL）总览 ================= */
+async function refreshCloudOverview() {
+  const balEl = $('ov-cloud-balance');
+  if (balEl && !state.cloudStats.balance) balEl.textContent = '查询中…';
+  try {
+    const [balRes, instRes] = await Promise.all([api.cloud.balance(), api.cloud.instances()]);
+    if (!balRes || !balRes.ok) throw new Error((balRes && balRes.error) || '余额查询失败');
+    state.cloudStats.balance = balRes.data;
+    state.cloudStats.instances = (instRes && instRes.ok) ? instRes.data : [];
+    state.cloudStats.error = '';
+  } catch (err) {
+    state.cloudStats.balance = null;
+    state.cloudStats.instances = [];
+    state.cloudStats.error = err.message || String(err);
+  }
+  state.cloudStats.updatedAt = Date.now();
+  renderCloudOverview();
+}
+
+function renderCloudOverview() {
+  const balEl = $('ov-cloud-balance');
+  if (!balEl) return;
+  const cs = state.cloudStats;
+  balEl.textContent = cs.balance ? `¥${cs.balance.yuan.toFixed(2)}` : (cs.error ? '不可用' : '-');
+  $('ov-cloud-updated').textContent = cs.updatedAt ? `（${fmtClock(cs.updatedAt)} 更新）` : '';
+
+  const box = $('ov-cloud-instances');
+  if (cs.error) {
+    box.innerHTML = `<div class="muted">${esc(cs.error)}。请到「设置 → AutoDL」填写开发者 Token。</div>`;
+  } else if (!cs.instances.length) {
+    box.innerHTML = '<div class="muted">暂无云端实例记录，可在下方选择服务与 GPU 规格一键创建部署。</div>';
+  } else {
+    box.innerHTML = `<div class="ci-row ci-head"><span>服务</span><span>实例 ID</span><span>状态</span><span>GPU</span><span>入口</span><span>操作</span></div>`
+      + cs.instances.map((it) => {
+        const svc = state.services.find((s) => s.id === it.serviceId) || {};
+        const statusKind = it.status === 'running' ? 'ok' : (/shutdown|released|error|查询失败/.test(it.status) ? 'bad' : 'warn');
+        return `<div class="ci-row">
+          <span>${esc(svc.name || it.serviceId)}</span>
+          <span class="mono" title="${esc(it.uuid)}">${esc(String(it.uuid || '').slice(0, 10))}…</span>
+          <span class="ci-status ${statusKind}">${esc(it.status)}</span>
+          <span>${esc(it.gpuSpecUuid || '-')}</span>
+          <span class="mono ci-endpoint" title="${esc(svc.endpoint || '')}">${esc(svc.endpoint || '-')}</span>
+          <span class="ci-actions">
+            <button class="btn tiny ghost" data-ci="save" data-id="${esc(it.serviceId)}">保存镜像</button>
+            <button class="btn tiny danger" data-ci="release" data-id="${esc(it.serviceId)}">释放</button>
+          </span>
+        </div>`;
+      }).join('');
+  }
+
+  const sel = $('ov-deploy-service');
+  if (sel) {
+    const rows = state.services.filter((s) => CLOUD_DEPLOYABLE.includes(s.id));
+    sel.innerHTML = rows.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+  }
+  renderOvCloudProgress();
+}
+
+function renderOvCloudProgress() {
+  const box = $('ov-cloud-progress');
+  if (!box) return;
+  const list = state.cloud.progress.slice(-6);
+  box.innerHTML = list.length
+    ? list.map((p) => `<div class="cloud-progress-line"><span class="muted">${fmtClock(p.ts)}</span> <b>${esc(p.serviceId)}</b> ${esc(p.message)}</div>`).join('')
+    : '';
+}
+
+$('btn-ov-cloud-refresh').addEventListener('click', async () => {
+  await refreshCloudOverview();
+  toast(state.cloudStats.error ? `云端查询失败: ${state.cloudStats.error}` : '云端信息已刷新',
+    state.cloudStats.error ? 'warn' : 'success');
+});
+
+$('btn-ov-deploy').addEventListener('click', async () => {
+  const serviceId = $('ov-deploy-service').value;
+  const gpu = $('ov-deploy-gpu').value;
+  if (!serviceId) { toast('请选择要部署的服务', 'warn'); return; }
+  const btn = $('btn-ov-deploy');
+  btn.disabled = true;
+  try {
+    const result = await call(api.cloud.deploy(serviceId, gpu), `部署 ${serviceId}`);
+    toast(`${serviceId} 部署完成: ${result.endpoint}`, 'success');
+  } catch (_) { /* toast 已提示 */ } finally {
+    btn.disabled = false;
+    try {
+      state.config = await call(api.config.get(), '读取配置');
+      state.services = await call(api.services.list(), '读取服务');
+    } catch (_) { /* ignore */ }
+    renderServices();
+    renderCloudPanel();
+    renderServiceSettings();
+    renderKpis();
+    refreshCloudOverview();
+  }
+});
+
+$('ov-cloud-instances').addEventListener('click', async (event) => {
+  const btn = event.target.closest('button[data-ci]');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const action = btn.dataset.ci;
+  if (action === 'release' && !window.confirm(`确认释放 ${id} 的云端实例？将停止计费并切回本地模式`)) return;
+  btn.disabled = true;
+  try {
+    if (action === 'save') {
+      const result = await call(api.cloud.saveImage(id), '保存镜像');
+      toast(result.imageUuid ? `镜像已保存: ${result.imageUuid}` : '镜像保存任务已提交，请到 AutoDL 控制台确认', 'success');
+    } else if (action === 'release') {
+      await call(api.cloud.release(id), '释放实例');
+      toast(`${id} 实例已释放，已切回本地模式`, 'success');
+    }
+  } catch (_) { /* toast 已提示 */ } finally {
+    btn.disabled = false;
+    try {
+      state.config = await call(api.config.get(), '读取配置');
+      state.services = await call(api.services.list(), '读取服务');
+    } catch (_) { /* ignore */ }
+    renderServices();
+    renderCloudPanel();
+    renderServiceSettings();
+    renderKpis();
+    refreshCloudOverview();
   }
 });
 
@@ -1560,6 +1768,8 @@ async function init() {
   refreshLibrary();
   refreshVoices();
   refreshCapabilities();
+  refreshDownloads();
+  refreshCloudOverview();
 }
 
 api.onEvent(({ type, payload }) => {
@@ -1622,11 +1832,38 @@ api.onEvent(({ type, payload }) => {
     if (state.cloud.progress.length > 200) state.cloud.progress.shift();
     renderCloudProgress();
     renderCloudPanel();
+    renderOvCloudProgress();
     if (payload.step === 'done' || payload.step === 'release') {
       Promise.all([api.config.get(), api.services.list()]).then(([cfg, svcs]) => {
         if (cfg && cfg.ok) state.config = cfg.data;
         if (svcs && svcs.ok) state.services = svcs.data;
         renderCloudPanel();
+        renderServices();
+        renderServiceSettings();
+        renderKpis();
+        refreshCloudOverview();
+      }).catch(() => {});
+    }
+    return;
+  }
+  if (type === 'download') {
+    const item = state.downloads.find((d) => d.id === payload.id);
+    if (item) {
+      item.progress = payload;
+      if (payload.state === 'running') item.state = 'running';
+      if (payload.state === 'error') { item.state = 'error'; item.lastError = payload.label; }
+    }
+    renderDownloads();
+    if (payload.state === 'done' || payload.state === 'error') {
+      api.downloads.status().then((res) => {
+        if (res && res.ok) state.downloads = res.data;
+        renderDownloads();
+        renderServices();
+      }).catch(() => {});
+      // 下载成功后配置可能被回写（tools/ 路径），刷新服务与设置
+      Promise.all([api.config.get(), api.services.list()]).then(([cfg, svcs]) => {
+        if (cfg && cfg.ok) state.config = cfg.data;
+        if (svcs && svcs.ok) state.services = svcs.data;
         renderServices();
         renderServiceSettings();
         renderKpis();
