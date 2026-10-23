@@ -113,9 +113,15 @@ install_realtime() {
   repo="$(ensure_repo MuseTalk https://github.com/TMElyralab/MuseTalk.git)" || return 1
   make_env musetalk 3.10 || return 1
 
-  log "安装 torch 2.0.1+cu118"
-  pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2+cu118 \
-    --index-url https://download.pytorch.org/whl/cu118 || return 1
+  # pytorch.org 直连在国内会被限速到 ~10kB/s，优先走 SJTU 镜像直链（linux_x86_64 tag 与官方一致）
+  log "安装 torch 2.0.1+cu118（SJTU 镜像直链，回退 pytorch.org）"
+  local SJTU=https://mirror.sjtu.edu.cn/pytorch-wheels/cu118
+  pip install \
+    "${SJTU}/torch-2.0.1%2Bcu118-cp310-cp310-linux_x86_64.whl" \
+    "${SJTU}/torchvision-0.15.2%2Bcu118-cp310-cp310-linux_x86_64.whl" \
+    "${SJTU}/torchaudio-2.0.2%2Bcu118-cp310-cp310-linux_x86_64.whl" \
+    || pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2+cu118 \
+      --index-url https://download.pytorch.org/whl/cu118 || return 1
 
   log "安装 MuseTalk 依赖（跳过 tensorflow 训练相关包）"
   grep -v -E '^(tensorflow|tensorboard)' "${repo}/requirements.txt" > /tmp/req_musetalk.txt
