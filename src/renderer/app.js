@@ -428,6 +428,7 @@ function renderCloudOverview() {
           <span>${esc(it.gpuSpecUuid || '-')}</span>
           <span class="mono ci-endpoint" title="${esc(svc.endpoint || '')}">${esc(svc.endpoint || '-')}</span>
           <span class="ci-actions">
+            <button class="btn tiny ghost" data-ci="sync" data-id="${esc(it.serviceId)}">同步代码</button>
             <button class="btn tiny ghost" data-ci="save" data-id="${esc(it.serviceId)}">保存镜像</button>
             <button class="btn tiny danger" data-ci="release" data-id="${esc(it.serviceId)}">释放</button>
           </span>
@@ -487,9 +488,13 @@ $('ov-cloud-instances').addEventListener('click', async (event) => {
   const id = btn.dataset.id;
   const action = btn.dataset.ci;
   if (action === 'release' && !window.confirm(`确认释放 ${id} 的云端实例？将停止计费并切回本地模式`)) return;
+  if (action === 'sync' && !window.confirm(`同步 ${id} 的云端代码？将关机重启实例，服务会中断约 1-3 分钟`)) return;
   btn.disabled = true;
   try {
-    if (action === 'save') {
+    if (action === 'sync') {
+      await call(api.cloud.syncRepo(id), '同步云端代码');
+      toast(`${id} 代码已同步到 GitHub 最新提交并重启完成`, 'success');
+    } else if (action === 'save') {
       const result = await call(api.cloud.saveImage(id), '保存镜像');
       toast(result.imageUuid ? `镜像已保存: ${result.imageUuid}` : '镜像保存任务已提交，请到 AutoDL 控制台确认', 'success');
     } else if (action === 'release') {

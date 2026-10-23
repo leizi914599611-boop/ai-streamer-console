@@ -162,7 +162,6 @@ const GROUPS = [
         ]
       },
       { key: 'cloud.autoDL.imageUuid', label: '私有镜像 UUID', type: 'text', wide: true, placeholder: '留空使用公共基础镜像；首次部署后在「云端部署」面板保存' },
-      { key: 'cloud.autoDL.syncOnStart', label: '实例启动时同步 GitHub 最新代码', type: 'switch', hint: '私有镜像二次启动也会 git fetch + reset 到远端最新提交；同步失败自动沿用镜像内版本' },
       { key: 'cloud.autoDL.vramMb', label: '实例显存（MB）', type: 'number', min: 0, max: 200000, step: 1024, hint: '部署时按 GPU 规格自动写入，用于能力矩阵合并计算' }
     ]
   }

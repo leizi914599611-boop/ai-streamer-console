@@ -21,7 +21,6 @@ fi
 
 APP_DIR=/root/app
 REPO_DIR=/root/repos
-BRANCH="${BRANCH:-main}"
 DONE_MARK="/root/.bootstrap_done_${SERVICE}"
 LOG_FILE="/root/bootstrap_${SERVICE}.log"
 
@@ -40,27 +39,6 @@ fi
 
 mkdir -p "${REPO_DIR}"
 cd "${APP_DIR}" 2>/dev/null || { log "缺少 ${APP_DIR}（start_command 应先 git clone 控制台仓库）"; exit 1; }
-
-# ---- 跟随 GitHub 仓库更新（私有镜像二次启动也会拉到最新代码）----
-# 命中更新时 re-exec 自己，避免 bash 继续读取被替换的脚本文件。
-sync_app_repo() {
-  [ -d "${APP_DIR}/.git" ] || return 1
-  local before after
-  before="$(git -C "${APP_DIR}" rev-parse HEAD 2>/dev/null || echo none)"
-  git -C "${APP_DIR}" fetch --depth 1 origin "${BRANCH}" >/dev/null 2>&1 || return 1
-  git -C "${APP_DIR}" reset --hard FETCH_HEAD >/dev/null 2>&1 || return 1
-  after="$(git -C "${APP_DIR}" rev-parse HEAD 2>/dev/null || echo none)"
-  [ "${before}" != "${after}" ]
-}
-
-if [ "${SKIP_APP_SYNC:-0}" != "1" ] && [ -d "${APP_DIR}/.git" ]; then
-  if sync_app_repo; then
-    log "控制台仓库已更新到 ${BRANCH} 最新提交，重新执行自举脚本"
-    SKIP_APP_SYNC=1 exec bash "${APP_DIR}/deploy/cloud_bootstrap.sh" "$@"
-  else
-    log "控制台仓库无更新或同步失败，沿用当前版本"
-  fi
-fi
 
 CONDA_BASE="$(conda info --base 2>/dev/null || echo /root/miniconda3)"
 # shellcheck disable=SC1091

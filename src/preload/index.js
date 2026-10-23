@@ -98,6 +98,7 @@ contextBridge.exposeInMainWorld('consoleApi', {
     deploy: (serviceId, gpuSpecUuid) => invoke('cloud:deploy', { serviceId, gpuSpecUuid }),
     instances: () => invoke('cloud:instances'),
     release: (serviceId) => invoke('cloud:release', { serviceId }),
+    syncRepo: (serviceId) => invoke('cloud:sync-repo', { serviceId }),
     saveImage: (serviceId, imageName) => invoke('cloud:save-image', { serviceId, imageName }),
     images: () => invoke('cloud:images')
   },

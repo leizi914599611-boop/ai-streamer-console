@@ -31,7 +31,6 @@
       "dataCenter": "westDC3",
       "gpuSpec": "4090D",
       "imageUuid": "",
-      "syncOnStart": true,
       "instances": {}
     }
   },

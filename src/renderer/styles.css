@@ -595,7 +595,7 @@ button, input, select, textarea {
 .cloud-ov-tools { display: flex; gap: 8px; }
 .cloud-ov-instances { display: flex; flex-direction: column; }
 .ci-row {
-  display: grid; grid-template-columns: 1.2fr .9fr .7fr .6fr 1.4fr .9fr;
+  display: grid; grid-template-columns: 1.1fr .9fr .7fr .6fr 1.2fr 1.5fr;
   gap: 10px; align-items: center; padding: 8px; font-size: 11.5px;
   border-bottom: 1px solid #131b26;
 }
@@ -607,7 +607,7 @@ button, input, select, textarea {
 .ci-status.warn { color: var(--warn); }
 .ci-status.bad { color: var(--danger); }
 .ci-endpoint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ci-actions { display: flex; gap: 6px; }
+.ci-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .cloud-ov-deploy { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid #131b26; padding-top: 12px; font-size: 12px; }
 .cloud-ov-deploy select {
   background: #0d1420; border: 1px solid #1e2836; border-radius: 7px;

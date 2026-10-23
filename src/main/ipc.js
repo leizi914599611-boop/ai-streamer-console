@@ -134,6 +134,7 @@ function registerIpc(ctx) {
   ipcMain.handle('cloud:deploy', wrap(async ({ serviceId, gpuSpecUuid } = {}) => cloudDeployer.deploy({ serviceId, gpuSpecUuid })));
   ipcMain.handle('cloud:instances', wrap(async () => cloudDeployer.instances()));
   ipcMain.handle('cloud:release', wrap(async ({ serviceId } = {}) => cloudDeployer.release({ serviceId })));
+  ipcMain.handle('cloud:sync-repo', wrap(async ({ serviceId } = {}) => cloudDeployer.syncRepo({ serviceId })));
   ipcMain.handle('cloud:save-image', wrap(async ({ serviceId, imageName } = {}) => cloudDeployer.saveImage({ serviceId, imageName })));
   ipcMain.handle('cloud:images', wrap(async () => cloudDeployer.listImages()));
 

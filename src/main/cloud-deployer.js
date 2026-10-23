@@ -36,6 +36,7 @@ class CloudDeployer extends EventEmitter {
     this.config = config;
     this.logger = logger;
     this.deploying = new Set();
+    this.syncing = new Set();
   }
 
   _apiKey() {
@@ -115,6 +116,26 @@ class CloudDeployer extends EventEmitter {
     return out;
   }
 
+  /** 生成实例开机启动命令；sync=true 时先把 /root/app 更新到 GitHub 最新提交 */
+  _bootCommand(serviceId, sync = false) {
+    const repoUrl = this.config.get('cloud.autoDL.repoUrl', '');
+    if (!repoUrl) throw new Error('请先在设置页 AutoDL 分组填写 GitHub 仓库地址（含 deploy/cloud_bootstrap.sh）');
+    const branch = this.config.get('cloud.autoDL.branch', 'main') || 'main';
+    const clone = `git clone --depth 1 -b ${branch} ${repoUrl} /root/app`;
+    const prepare = sync
+      ? 'if [ -d /root/app/.git ]; then '
+        + `( git -C /root/app remote set-url origin ${repoUrl} 2>/dev/null || git -C /root/app remote add origin ${repoUrl} 2>/dev/null || true; `
+        + `git -C /root/app fetch --depth 1 origin ${branch} && git -C /root/app reset --hard FETCH_HEAD ) `
+        + '|| echo "[deploy] 代码同步失败，沿用镜像内版本"; '
+        + `else ${clone}; fi;`
+      : `([ -d /root/app ] || ${clone});`;
+    return [
+      'source /etc/network_turbo 2>/dev/null || true;',
+      prepare,
+      `bash /root/app/deploy/cloud_bootstrap.sh ${serviceId} >> /root/bootstrap_${serviceId}_cmd.log 2>&1`
+    ].join(' ');
+  }
+
   /**
    * 一键部署：创建实例 → bootstrap 装环境 → 健康检查 → 回写 endpoint/mode。
    * 若已配置私有镜像（cloud.autoDL.imageUuid）则跳过安装直接起服务。
@@ -131,32 +152,13 @@ class CloudDeployer extends EventEmitter {
 
   async _deploy({ serviceId, gpuSpecUuid }) {
     const spec = this._serviceSpec(serviceId);
-    const repoUrl = this.config.get('cloud.autoDL.repoUrl', '');
-    if (!repoUrl) throw new Error('请先在设置页 AutoDL 分组填写 GitHub 仓库地址（含 deploy/cloud_bootstrap.sh）');
-    const branch = this.config.get('cloud.autoDL.branch', 'main') || 'main';
     const dataCenter = this.config.get('cloud.autoDL.dataCenter', 'westDC3') || 'westDC3';
     const gpu = gpuSpecUuid || this.config.get('cloud.autoDL.gpuSpec', '4090D');
     if (!GPU_SPECS[gpu]) throw new Error(`未知 GPU 规格: ${gpu}`);
     const imageUuid = this.config.get('cloud.autoDL.imageUuid', '');
 
-    // 私有镜像二次启动也跟随 GitHub 仓库更新（可用 cloud.autoDL.syncOnStart 关闭）
-    const syncOnStart = this.config.get('cloud.autoDL.syncOnStart', true) !== false;
-    const appSync = syncOnStart
-      ? [
-          'if [ -d /root/app/.git ]; then',
-          `( git -C /root/app remote set-url origin ${repoUrl} 2>/dev/null || git -C /root/app remote add origin ${repoUrl} 2>/dev/null || true;`,
-          `git -C /root/app fetch --depth 1 origin ${branch} && git -C /root/app reset --hard FETCH_HEAD )`,
-          '|| echo "[deploy] 代码同步失败，沿用镜像内版本";',
-          `else git clone --depth 1 -b ${branch} ${repoUrl} /root/app; fi;`
-        ].join(' ')
-      : `([ -d /root/app ] || git clone --depth 1 -b ${branch} ${repoUrl} /root/app);`;
-
-    // start_command：同步仓库（无则克隆）后执行仓库内自举脚本（幂等）
-    const startCommand = [
-      'source /etc/network_turbo 2>/dev/null || true;',
-      appSync,
-      `bash /root/app/deploy/cloud_bootstrap.sh ${serviceId} >> /root/bootstrap_${serviceId}_cmd.log 2>&1`
-    ].join(' ');
+    // start_command：仓库不在则克隆，然后执行仓库内自举脚本（幂等）
+    const startCommand = this._bootCommand(serviceId);
 
     this._progress(serviceId, 'create', `创建实例（${GPU_SPECS[gpu].label}${imageUuid ? ' · 私有镜像' : ' · 基础镜像'}）`);
     const created = await this._request('/api/v1/dev/instance/pro/create', {
@@ -259,6 +261,108 @@ class CloudDeployer extends EventEmitter {
       this._progress(serviceId, 'image', '镜像保存任务已提交，镜像 ID 请在 AutoDL 控制台确认后填入设置');
     }
     return { imageUuid, imageName: name };
+  }
+
+  /** 命令触发：重启实例并把 /root/app 同步到 GitHub 最新提交（AutoDL 只能在开机时下发命令） */
+  async syncRepo({ serviceId }) {
+    if (this.syncing.has(serviceId)) throw new Error(`${serviceId} 正在同步中，请勿重复点击`);
+    this.syncing.add(serviceId);
+    try {
+      return await this._syncRepo({ serviceId });
+    } finally {
+      this.syncing.delete(serviceId);
+    }
+  }
+
+  async _syncRepo({ serviceId }) {
+    const rec = (this.config.get('cloud.autoDL.instances', {}) || {})[serviceId];
+    if (!rec || !rec.uuid) throw new Error(`服务 ${serviceId} 没有已部署的实例记录`);
+    const uuid = rec.uuid;
+    const spec = this._serviceSpec(serviceId);
+    const startCommand = this._bootCommand(serviceId, true);
+
+    let status = '';
+    try {
+      status = (await this._request('/api/v1/dev/instance/pro/status', { instance_uuid: uuid }))?.status || '';
+    } catch (err) {
+      throw new Error(`查询实例状态失败: ${err.message}`);
+    }
+    if (['released', 'releasing'].includes(status)) throw new Error(`实例已释放（${status}），请重新部署`);
+
+    if (status === 'running') {
+      this._progress(serviceId, 'sync', '关机以重载启动命令…');
+      await this._request('/api/v1/dev/instance/pro/power_off', { instance_uuid: uuid });
+      const offDeadline = Date.now() + STATUS_TIMEOUT_MS;
+      while (Date.now() < offDeadline) {
+        status = (await this._request('/api/v1/dev/instance/pro/status', { instance_uuid: uuid }))?.status || '';
+        if (status === 'shutdown') break;
+        await sleep(STATUS_POLL_INTERVAL_MS);
+      }
+      if (status !== 'shutdown') throw new Error(`等待关机超时（当前: ${status || 'unknown'}）`);
+      this._progress(serviceId, 'sync', '实例已关机');
+    }
+
+    this._progress(serviceId, 'sync', '开机并同步 GitHub 最新代码…');
+    await this._request('/api/v1/dev/instance/pro/power_on', {
+      instance_uuid: uuid,
+      payload: 'gpu',
+      start_command: startCommand
+    });
+
+    const runDeadline = Date.now() + STATUS_TIMEOUT_MS;
+    while (Date.now() < runDeadline) {
+      status = (await this._request('/api/v1/dev/instance/pro/status', { instance_uuid: uuid }))?.status || '';
+      if (status === 'running') break;
+      if (['released', 'error'].includes(status)) throw new Error(`实例进入异常状态: ${status}`);
+      await sleep(STATUS_POLL_INTERVAL_MS);
+    }
+    if (status !== 'running') throw new Error(`等待实例 running 超时（当前: ${status || 'unknown'}）`);
+    this._progress(serviceId, 'sync', '实例已开机，等待服务重新就绪…');
+
+    // 刷新 6006 公网域名（同一实例通常不变，变了就回写配置）
+    let endpoint = '';
+    const snapDeadline = Date.now() + STATUS_TIMEOUT_MS;
+    while (Date.now() < snapDeadline && !endpoint) {
+      const snap = await this._request('/api/v1/dev/instance/pro/snapshot', { instance_uuid: uuid });
+      const domain = snap?.service_6006_domain || '';
+      if (domain) endpoint = domain.startsWith('http') ? domain : `https://${domain}`;
+      else await sleep(STATUS_POLL_INTERVAL_MS);
+    }
+    if (!endpoint) endpoint = (spec.cloud && spec.cloud.endpoint) || '';
+    if (!endpoint) {
+      this._progress(serviceId, 'sync', '代码已同步并重启（未拿到入口域名，请重新部署）');
+      return { uuid, synced: true, endpoint: '' };
+    }
+
+    // 等服务重启就绪（依赖清单有变化时会先 pip install）
+    const healthPath = spec.healthPath || '/';
+    const healthDeadline = Date.now() + HEALTH_TIMEOUT_MS;
+    const startedAt = Date.now();
+    let ready = false;
+    let lastErr = '';
+    while (Date.now() < healthDeadline && !ready) {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 10000);
+        const resp = await fetch(`${endpoint}${healthPath}`, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (resp.ok) ready = true;
+        else lastErr = `HTTP ${resp.status}`;
+      } catch (err) {
+        lastErr = err.name === 'AbortError' ? '连接超时' : err.message;
+      }
+      if (!ready) {
+        const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+        this._progress(serviceId, 'sync', `服务尚未就绪（${elapsed}s，${lastErr || '等待中'}）…`);
+        await sleep(HEALTH_POLL_INTERVAL_MS);
+      }
+    }
+    if (!ready) throw new Error(`同步后服务未就绪（30 分钟）: ${endpoint}${healthPath} ${lastErr}`);
+
+    this.config.setService(serviceId, { cloud: { ...(spec.cloud || {}), endpoint } });
+    const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+    this._progress(serviceId, 'sync', `代码已同步并重启完成 ✔（就绪耗时 ${elapsedSec}s）`);
+    return { uuid, synced: true, endpoint, elapsedSec };
   }
 
   /** 释放实例：先关机再释放，回写服务为本地模式 */
