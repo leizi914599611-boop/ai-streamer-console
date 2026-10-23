@@ -88,6 +88,32 @@ class CloudDeployer extends EventEmitter {
     this.emit('progress', payload);
   }
 
+  /** 部分查询接口（status/snapshot）只接受 GET + query，POST 会 404 */
+  async _get(path) {
+    const resp = await fetch(`${API_HOST}${path}`, {
+      headers: { 'Authorization': this._apiKey() }
+    });
+    const text = await resp.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (_) {
+      throw new Error(`AutoDL 接口返回非 JSON（HTTP ${resp.status}）: ${text.slice(0, 120)}`);
+    }
+    if (!resp.ok) throw new Error(`AutoDL HTTP ${resp.status}: ${json.msg || text.slice(0, 120)}`);
+    if (json.code && json.code !== 'Success') throw new Error(`AutoDL ${json.code}: ${json.msg || '未知错误'}`);
+    return json.data;
+  }
+
+  async _status(uuid) {
+    const data = await this._get(`/api/v1/dev/instance/pro/status?instance_uuid=${uuid}`);
+    return typeof data === 'string' ? data : (data?.status || '');
+  }
+
+  async _snapshot(uuid) {
+    return await this._get(`/api/v1/dev/instance/pro/snapshot?instance_uuid=${uuid}`);
+  }
+
   /** 账户余额（AutoDL 返回毫，/1000 = 元） */
   async balance() {
     const data = await this._request('/api/v1/dev/wallet/balance');
@@ -191,8 +217,7 @@ class CloudDeployer extends EventEmitter {
     for (const [serviceId, rec] of Object.entries(records)) {
       let status = 'unknown';
       try {
-        const data = await this._request('/api/v1/dev/instance/pro/status', { instance_uuid: rec.uuid });
-        status = data?.status || status;
+        status = (await this._status(rec.uuid)) || status;
       } catch (err) {
         status = `查询失败: ${err.message}`;
       }
@@ -260,15 +285,15 @@ class CloudDeployer extends EventEmitter {
     if (!chosen) {
       throw new Error(`各机房均无 ${GPU_SPECS[gpu].label} 空闲卡，请稍后再试（已检测：${summary}）`);
     }
-    const dataCenterFinal = chosen.dataCenter;
-    this._progress(serviceId, 'stock', `${chosen.name} 空闲 ${chosen.idle}/${chosen.total} 张 → 选用该机房`);
+    this._progress(serviceId, 'stock', `${chosen.name} 空闲 ${chosen.idle}/${chosen.total} 张（AutoDL 按库存自动调度机房）`);
 
     // start_command：仓库不在则克隆，然后执行仓库内自举脚本（幂等）
     const startCommand = this._bootCommand(serviceId);
 
-    this._progress(serviceId, 'create', `创建实例（${chosen.name} · ${GPU_SPECS[gpu].label}${imageUuid ? ' · 私有镜像' : ' · 基础镜像'}）`);
+    // 注意：AutoDL 新版 OpenAPI 不接受 data_center_list（传了会 RequestParameterIsWrong），
+    // 调度由平台按实时库存自动完成；上面已提前探测库存用于失败前预警。
+    this._progress(serviceId, 'create', `创建实例（${GPU_SPECS[gpu].label}${imageUuid ? ' · 私有镜像' : ' · 基础镜像'}）`);
     const created = await this._request('/api/v1/dev/instance/pro/create', {
-      data_center_list: [dataCenterFinal],
       req_gpu_amount: 1,
       expand_system_disk_by_gb: 0,
       gpu_spec_uuid: gpu,
@@ -279,7 +304,7 @@ class CloudDeployer extends EventEmitter {
     });
     const uuid = typeof created === 'string' ? created : (created?.instance_uuid || created?.uuid);
     if (!uuid) throw new Error(`创建实例未返回 ID: ${JSON.stringify(created).slice(0, 200)}`);
-    this._recordInstance(serviceId, { uuid, gpuSpecUuid: gpu, dataCenter: dataCenterFinal, dataCenterName: chosen.name, createdAt: Date.now() });
+    this._recordInstance(serviceId, { uuid, gpuSpecUuid: gpu, createdAt: Date.now() });
     this._progress(serviceId, 'create', `实例已创建: ${uuid}`);
 
     // 等待实例 running
@@ -287,8 +312,7 @@ class CloudDeployer extends EventEmitter {
     const statusDeadline = Date.now() + STATUS_TIMEOUT_MS;
     let status = '';
     while (Date.now() < statusDeadline) {
-      const data = await this._request('/api/v1/dev/instance/pro/status', { instance_uuid: uuid });
-      status = data?.status || '';
+      status = await this._status(uuid);
       if (status === 'running') break;
       if (['shutdown', 'released', 'error'].includes(status)) throw new Error(`实例进入异常状态: ${status}`);
       await sleep(STATUS_POLL_INTERVAL_MS);
@@ -301,7 +325,7 @@ class CloudDeployer extends EventEmitter {
     let domain = '';
     const snapDeadline = Date.now() + STATUS_TIMEOUT_MS;
     while (Date.now() < snapDeadline && !domain) {
-      const snap = await this._request('/api/v1/dev/instance/pro/snapshot', { instance_uuid: uuid });
+      const snap = await this._snapshot(uuid);
       domain = snap?.service_6006_domain || '';
       if (!domain) await sleep(STATUS_POLL_INTERVAL_MS);
     }
@@ -389,7 +413,7 @@ class CloudDeployer extends EventEmitter {
 
     let status = '';
     try {
-      status = (await this._request('/api/v1/dev/instance/pro/status', { instance_uuid: uuid }))?.status || '';
+      status = await this._status(uuid);
     } catch (err) {
       throw new Error(`查询实例状态失败: ${err.message}`);
     }
@@ -400,7 +424,7 @@ class CloudDeployer extends EventEmitter {
       await this._request('/api/v1/dev/instance/pro/power_off', { instance_uuid: uuid });
       const offDeadline = Date.now() + STATUS_TIMEOUT_MS;
       while (Date.now() < offDeadline) {
-        status = (await this._request('/api/v1/dev/instance/pro/status', { instance_uuid: uuid }))?.status || '';
+        status = await this._status(uuid);
         if (status === 'shutdown') break;
         await sleep(STATUS_POLL_INTERVAL_MS);
       }
@@ -417,7 +441,7 @@ class CloudDeployer extends EventEmitter {
 
     const runDeadline = Date.now() + STATUS_TIMEOUT_MS;
     while (Date.now() < runDeadline) {
-      status = (await this._request('/api/v1/dev/instance/pro/status', { instance_uuid: uuid }))?.status || '';
+      status = await this._status(uuid);
       if (status === 'running') break;
       if (['released', 'error'].includes(status)) throw new Error(`实例进入异常状态: ${status}`);
       await sleep(STATUS_POLL_INTERVAL_MS);
@@ -429,7 +453,7 @@ class CloudDeployer extends EventEmitter {
     let endpoint = '';
     const snapDeadline = Date.now() + STATUS_TIMEOUT_MS;
     while (Date.now() < snapDeadline && !endpoint) {
-      const snap = await this._request('/api/v1/dev/instance/pro/snapshot', { instance_uuid: uuid });
+      const snap = await this._snapshot(uuid);
       const domain = snap?.service_6006_domain || '';
       if (domain) endpoint = domain.startsWith('http') ? domain : `https://${domain}`;
       else await sleep(STATUS_POLL_INTERVAL_MS);
