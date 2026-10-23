@@ -472,16 +472,21 @@ function pushCloudProgress(serviceId, step, message) {
 
 function renderGpuOptions() {
   if (!gpuPicker) return;
-  const cheapestId = gpuPicker.specs[0].id;
-  $('gpu-options').innerHTML = gpuPicker.specs.map((s) => `
-    <div class="gpu-opt ${s.id === gpuPicker.selected ? 'active' : ''}" data-gpu="${esc(s.id)}">
+  $('gpu-options').innerHTML = gpuPicker.specs.map((s) => {
+    const usable = s.idle > 0;
+    const where = usable
+      ? s.available.map((a) => `${a.name} ${a.idle}`).join(' · ')
+      : '各机房暂无空闲卡';
+    return `
+    <div class="gpu-opt ${s.id === gpuPicker.selected ? 'active' : ''} ${usable ? '' : 'disabled'}" data-gpu="${esc(s.id)}">
       <span class="gpu-radio"></span>
       <span class="gpu-opt-body">
         <div class="gpu-opt-label">${esc(s.label)}</div>
-        <div class="gpu-opt-meta">${s.vramMb ? `${Math.round(s.vramMb / 1024)}GB 显存 · ${esc(s.priceLabel || '')}` : ''}</div>
+        <div class="gpu-opt-meta">${esc(where)}</div>
       </span>
-      ${s.id === cheapestId ? '<span class="gpu-tag">最便宜</span>' : ''}
-    </div>`).join('');
+      ${usable ? `<span class="gpu-tag">${s.idle} 张</span>` : '<span class="gpu-tag off">无货</span>'}
+    </div>`;
+  }).join('');
 }
 
 function renderGpuCountdown() {
@@ -503,13 +508,21 @@ function startGpuCountdown() {
 
 async function openGpuPicker(serviceId) {
   if (gpuPicker) return;
-  let specs;
+  let stock;
   try {
-    specs = await call(api.cloud.gpuSpecs(), '读取算力规格');
+    stock = await call(api.cloud.gpuStock(), '检测机房库存');
   } catch (_) { return; }
-  if (!specs || !specs.length) { toast('没有可用的算力规格', 'warn'); return; }
-  gpuPicker = { specs, selected: specs[0].id, timer: null, serviceId };
-  $('gpu-picker-sub').textContent = `服务 ${serviceId} · 将创建按量计费实例；不操作则 ${GPU_PICKER_SECONDS} 秒后采用最低价位（${specs[0].label}）`;
+  const specs = (stock && stock.specs) || [];
+  if (!specs.length) { toast('没有可用的算力规格', 'warn'); return; }
+  const usable = specs.filter((s) => s.idle > 0);
+  if (!usable.length) {
+    const names = ((stock && stock.centers) || []).map((c) => c.name).join('、');
+    toast(`各机房均无空闲卡（已检测 ${names}），请稍后再试`, 'warn');
+    return;
+  }
+  gpuPicker = { specs, selected: usable[0].id, timer: null, serviceId };
+  const centers = (stock && stock.centers) || [];
+  $('gpu-picker-sub').textContent = `服务 ${serviceId} · 已实时检测 ${centers.length} 个机房（库存不缓存）；创建时自动选空闲最多的机房`;
   renderGpuOptions();
   startGpuCountdown();
   $('gpu-picker').classList.remove('hidden');
@@ -549,7 +562,7 @@ async function doDeploy(serviceId, gpu) {
 
 $('gpu-options').addEventListener('click', (event) => {
   const opt = event.target.closest('[data-gpu]');
-  if (!opt || !gpuPicker) return;
+  if (!opt || !gpuPicker || opt.classList.contains('disabled')) return;
   gpuPicker.selected = opt.dataset.gpu;
   renderGpuOptions();
   renderGpuCountdown();

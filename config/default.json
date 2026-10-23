@@ -28,7 +28,7 @@
       "vramMb": 0,
       "repoUrl": "https://github.com/leizi914599611-boop/ai-streamer-console.git",
       "branch": "main",
-      "dataCenter": "westDC3",
+      "dataCenter": "",
       "gpuSpec": "4090D",
       "imageUuid": "",
       "instances": {}

@@ -153,7 +153,7 @@ const GROUPS = [
       { key: 'cloud.autoDL.apiKey', label: '开发者 Token', type: 'password', wide: true, placeholder: 'AutoDL 控制台 → 设置 → 开发者Token' },
       { key: 'cloud.autoDL.repoUrl', label: 'GitHub 仓库地址', type: 'text', wide: true, placeholder: 'https://github.com/your/ai-streamer-console.git（需含 deploy/cloud_bootstrap.sh）' },
       { key: 'cloud.autoDL.branch', label: '分支', type: 'text', placeholder: 'main' },
-      { key: 'cloud.autoDL.dataCenter', label: '数据中心', type: 'text', placeholder: 'westDC3' },
+      { key: 'cloud.autoDL.dataCenter', label: '指定数据中心（可选）', type: 'text', placeholder: '留空 = 每次创建前自动检测各机房库存，如 chongqingDC1' },
       {
         key: 'cloud.autoDL.gpuSpec', label: '默认 GPU 规格', type: 'select', options: [
           { value: '4090D', label: 'RTX 4090D · 24GB（推理首选）' },

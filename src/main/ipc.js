@@ -135,7 +135,8 @@ function registerIpc(ctx) {
   ipcMain.handle('cloud:gpu-specs', wrap(async () => Object.entries(GPU_SPECS)
     .map(([id, v]) => ({ id, ...v }))
     .sort((a, b) => a.priceRank - b.priceRank)));
-  ipcMain.handle('cloud:deploy', wrap(async ({ serviceId, gpuSpecUuid } = {}) => cloudDeployer.deploy({ serviceId, gpuSpecUuid })));
+  ipcMain.handle('cloud:gpu-stock', wrap(async () => cloudDeployer.gpuStock()));
+  ipcMain.handle('cloud:deploy', wrap(async ({ serviceId, gpuSpecUuid, dataCenter } = {}) => cloudDeployer.deploy({ serviceId, gpuSpecUuid, dataCenter })));
   ipcMain.handle('cloud:instances', wrap(async () => cloudDeployer.instances()));
   ipcMain.handle('cloud:release', wrap(async ({ serviceId } = {}) => cloudDeployer.release({ serviceId })));
   ipcMain.handle('cloud:sync-repo', wrap(async ({ serviceId } = {}) => cloudDeployer.syncRepo({ serviceId })));

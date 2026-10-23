@@ -5,12 +5,27 @@ const { EventEmitter } = require('events');
 /** AutoDL OpenAPI HOST（鉴权: Authorization: <开发者Token>，均为 POST JSON） */
 const API_HOST = 'https://api.autodl.com';
 
-/** GPU 规格 → 显存（用于能力矩阵合并）；priceRank 越小越便宜（AutoDL 无价格查询接口，按档位标注） */
+/**
+ * GPU 规格：stockNames 对应 /api/v1/dev/machine/region/gpu_stock 返回的前台 GPU 型号名；
+ * priceRank 越小越便宜（AutoDL 无价格查询接口，按档位标注）
+ */
 const GPU_SPECS = {
-  '4090D': { label: 'RTX 4090D · 24GB（推理首选）', vramMb: 24576, priceRank: 1, priceLabel: '最低价位' },
-  'v-48g': { label: 'RTX 4090 · 48GB（训练/大模型）', vramMb: 49152, priceRank: 2, priceLabel: '中价位' },
-  '5090-p': { label: 'RTX 5090 · 32GB', vramMb: 32768, priceRank: 3, priceLabel: '较高价位' }
+  '4090D': { label: 'RTX 4090D · 24GB（推理首选）', vramMb: 24576, priceRank: 1, priceLabel: '最低价位', stockNames: ['RTX 4090D'] },
+  'v-48g': { label: 'RTX 4090 · 48GB（训练/大模型）', vramMb: 49152, priceRank: 2, priceLabel: '中价位', stockNames: ['vGPU-48GB', 'vGPU-48GB-425W', 'vGPU-48GB-350W'] },
+  '5090-p': { label: 'RTX 5090 · 32GB', vramMb: 32768, priceRank: 3, priceLabel: '较高价位', stockNames: ['RTX 5090'] }
 };
+
+/** 机房候选：运行时优先从 AutoDL 公共配置接口动态获取，失败时回退该列表 */
+const FALLBACK_DATA_CENTERS = [
+  { dataCenter: 'chongqingDC1', name: '重庆A区' },
+  { dataCenter: 'westDC3', name: '西北B区' },
+  { dataCenter: 'beijingDC2', name: '北京B区' },
+  { dataCenter: 'neimengDC3', name: '内蒙B区' }
+];
+
+/** 公共机房配置（匿名可访问），用于动态获取机房列表 */
+const COMMON_API = 'https://www.autodl.com/api/v1/common';
+
 
 /** 公共基础镜像 cuda11.8 + torch2.0（未保存私有镜像前的首次部署使用） */
 const BASE_IMAGE_UUID = 'base-image-l2t43iu6uk';
@@ -87,6 +102,75 @@ class CloudDeployer extends EventEmitter {
     return data && Array.isArray(data.list) ? data.list : [];
   }
 
+  /** 机房列表：优先取 AutoDL 公共配置接口（匿名），失败回退内置列表 */
+  async dataCenters() {
+    try {
+      const resp = await fetch(COMMON_API);
+      const json = await resp.json();
+      const list = (json && json.data && json.data.region_list) || [];
+      const seen = new Map();
+      for (const r of list) {
+        if (!r || !r.data_center || r.visible !== 'all') continue;
+        if (!seen.has(r.data_center)) seen.set(r.data_center, { dataCenter: r.data_center, name: r.region_name });
+      }
+      if (seen.size) return [...seen.values()];
+    } catch (err) {
+      this.logger.warn('cloud', `机房列表获取失败，使用内置列表: ${err.message}`);
+    }
+    return FALLBACK_DATA_CENTERS;
+  }
+
+  /** 单个机房库存 → { 'RTX 4090D': { idle, total } } */
+  async _stockOf(dataCenter) {
+    const data = await this._request('/api/v1/dev/machine/region/gpu_stock', {
+      region_sign: dataCenter,
+      cuda_v_from: 113
+    });
+    const map = {};
+    for (const item of Array.isArray(data) ? data : []) {
+      for (const [name, s] of Object.entries(item || {})) {
+        map[name] = {
+          idle: Number(s.idle_gpu_num || 0),
+          total: Number(s.total_gpu_num || 0)
+        };
+      }
+    }
+    return map;
+  }
+
+  /** 实时库存：各机房 × 各规格（每次创建前都重新拉取，不做缓存） */
+  async gpuStock() {
+    const centers = await this.dataCenters();
+    const matrix = await Promise.all(centers.map(async (c) => {
+      try {
+        return { ...c, stock: await this._stockOf(c.dataCenter) };
+      } catch (err) {
+        return { ...c, stock: {}, error: err.message };
+      }
+    }));
+    const specs = Object.entries(GPU_SPECS).map(([id, v]) => {
+      let idle = 0;
+      let total = 0;
+      const available = [];
+      for (const c of matrix) {
+        const nums = (v.stockNames || []).map((n) => c.stock[n]).filter(Boolean);
+        if (!nums.length) continue;
+        const ci = nums.reduce((a, b) => a + b.idle, 0);
+        const ct = nums.reduce((a, b) => a + b.total, 0);
+        idle += ci;
+        total += ct;
+        if (ci > 0) available.push({ dataCenter: c.dataCenter, name: c.name, idle: ci, total: ct });
+      }
+      available.sort((a, b) => b.idle - a.idle);
+      return { id, label: v.label, vramMb: v.vramMb, priceRank: v.priceRank, priceLabel: v.priceLabel, idle, total, available };
+    }).sort((a, b) => a.priceRank - b.priceRank);
+    return {
+      checkedAt: Date.now(),
+      centers: matrix.map((c) => ({ dataCenter: c.dataCenter, name: c.name, error: c.error || '' })),
+      specs
+    };
+  }
+
   _serviceSpec(serviceId) {
     const spec = (this.config.get('services', []) || []).find((s) => s.id === serviceId);
     if (!spec) throw new Error(`服务不存在: ${serviceId}`);
@@ -141,29 +225,50 @@ class CloudDeployer extends EventEmitter {
    * 一键部署：创建实例 → bootstrap 装环境 → 健康检查 → 回写 endpoint/mode。
    * 若已配置私有镜像（cloud.autoDL.imageUuid）则跳过安装直接起服务。
    */
-  async deploy({ serviceId, gpuSpecUuid }) {
+  async deploy({ serviceId, gpuSpecUuid, dataCenter }) {
     if (this.deploying.has(serviceId)) throw new Error(`${serviceId} 正在部署中，请勿重复点击`);
     this.deploying.add(serviceId);
     try {
-      return await this._deploy({ serviceId, gpuSpecUuid });
+      return await this._deploy({ serviceId, gpuSpecUuid, dataCenter });
     } finally {
       this.deploying.delete(serviceId);
     }
   }
 
-  async _deploy({ serviceId, gpuSpecUuid }) {
+  async _deploy({ serviceId, gpuSpecUuid, dataCenter }) {
     const spec = this._serviceSpec(serviceId);
-    const dataCenter = this.config.get('cloud.autoDL.dataCenter', 'westDC3') || 'westDC3';
     const gpu = gpuSpecUuid || this.config.get('cloud.autoDL.gpuSpec', '4090D');
     if (!GPU_SPECS[gpu]) throw new Error(`未知 GPU 规格: ${gpu}`);
     const imageUuid = this.config.get('cloud.autoDL.imageUuid', '');
+    /** 仅在用户显式指定时才锁定机房；默认空 → 每次创建前实时检测 */
+    const preferred = dataCenter || this.config.get('cloud.autoDL.dataCenter', '') || '';
+
+    // 不预设机房：每次创建前实时检测各机房库存，选有卡且空闲最多的一处
+    this._progress(serviceId, 'stock', '检测各机房实时库存…');
+    const stock = await this.gpuStock();
+    const target = stock.specs.find((s) => s.id === gpu);
+    const summary = target && target.available.length
+      ? target.available.map((a) => `${a.name} ${a.idle} 张`).join('、')
+      : '各机房均为 0';
+    let chosen = null;
+    if (preferred) {
+      chosen = (target && target.available.find((a) => a.dataCenter === preferred)) || null;
+      if (!chosen) throw new Error(`${preferred} 当前没有 ${GPU_SPECS[gpu].label} 空闲卡（${summary}）`);
+    } else {
+      chosen = (target && target.available[0]) || null;
+    }
+    if (!chosen) {
+      throw new Error(`各机房均无 ${GPU_SPECS[gpu].label} 空闲卡，请稍后再试（已检测：${summary}）`);
+    }
+    const dataCenterFinal = chosen.dataCenter;
+    this._progress(serviceId, 'stock', `${chosen.name} 空闲 ${chosen.idle}/${chosen.total} 张 → 选用该机房`);
 
     // start_command：仓库不在则克隆，然后执行仓库内自举脚本（幂等）
     const startCommand = this._bootCommand(serviceId);
 
-    this._progress(serviceId, 'create', `创建实例（${GPU_SPECS[gpu].label}${imageUuid ? ' · 私有镜像' : ' · 基础镜像'}）`);
+    this._progress(serviceId, 'create', `创建实例（${chosen.name} · ${GPU_SPECS[gpu].label}${imageUuid ? ' · 私有镜像' : ' · 基础镜像'}）`);
     const created = await this._request('/api/v1/dev/instance/pro/create', {
-      data_center_list: [dataCenter],
+      data_center_list: [dataCenterFinal],
       req_gpu_amount: 1,
       expand_system_disk_by_gb: 0,
       gpu_spec_uuid: gpu,
@@ -174,7 +279,7 @@ class CloudDeployer extends EventEmitter {
     });
     const uuid = typeof created === 'string' ? created : (created?.instance_uuid || created?.uuid);
     if (!uuid) throw new Error(`创建实例未返回 ID: ${JSON.stringify(created).slice(0, 200)}`);
-    this._recordInstance(serviceId, { uuid, gpuSpecUuid: gpu, createdAt: Date.now() });
+    this._recordInstance(serviceId, { uuid, gpuSpecUuid: gpu, dataCenter: dataCenterFinal, dataCenterName: chosen.name, createdAt: Date.now() });
     this._progress(serviceId, 'create', `实例已创建: ${uuid}`);
 
     // 等待实例 running
@@ -239,8 +344,8 @@ class CloudDeployer extends EventEmitter {
     });
     this.config.set('cloud.autoDL.vramMb', GPU_SPECS[gpu].vramMb);
     const totalSec = Math.floor((Date.now() - startedAt) / 1000);
-    this._progress(serviceId, 'done', `部署完成 ✔ ${endpoint}（服务就绪耗时 ${totalSec}s）`);
-    return { uuid, endpoint, elapsedSec: totalSec };
+    this._progress(serviceId, 'done', `部署完成 ✔ ${endpoint}（${chosen.name} · 服务就绪耗时 ${totalSec}s）`);
+    return { uuid, endpoint, dataCenter: dataCenterFinal, elapsedSec: totalSec };
   }
 
   /** 保存当前实例为私有镜像，写入 cloud.autoDL.imageUuid（之后部署免安装） */
