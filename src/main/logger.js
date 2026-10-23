@@ -53,6 +53,13 @@ class Logger extends EventEmitter {
   warn(scope, message) { this._write('warn', scope, message); }
   error(scope, message) { this._write('error', scope, message); }
   success(scope, message) { this._write('success', scope, message); }
+  /** 仅落盘、不入内存缓冲、不广播：用于健康检查 200 OK 等正常轮询降噪 */
+  trace(scope, message) {
+    try {
+      this._openStream();
+      this.stream.write(`[${new Date().toISOString()}] [TRACE] [${scope}] ${String(message)}\n`);
+    } catch (_) { /* 忽略 */ }
+  }
 
   recent(limit = 300) {
     return this.entries.slice(-limit);

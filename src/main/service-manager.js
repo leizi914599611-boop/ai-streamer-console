@@ -209,6 +209,7 @@ class ServiceManager extends EventEmitter {
     entry.lastError = null;
     this._update(entry, STATES.STARTING, { startedAt: Date.now() });
 
+    const _HEALTH_OK_RE = /\/health.*\s200\s+OK|"GET\s+\/health[^"]*"\s+200\s+OK/i;
     const pipe = (stream, level) => {
       let rest = '';
       stream.on('data', (buf) => {
@@ -216,7 +217,14 @@ class ServiceManager extends EventEmitter {
         const lines = rest.split(/\r?\n/);
         rest = lines.pop();
         for (const line of lines) {
-          if (line.trim()) this.logger[level](`svc:${id}`, line);
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          // 健康检查 200 OK 仅落盘、不广播到前端面板，避免轮询刷屏
+          if (level === 'info' && _HEALTH_OK_RE.test(trimmed)) {
+            this.logger.trace(`svc:${id}`, trimmed);
+          } else {
+            this.logger[level](`svc:${id}`, trimmed);
+          }
         }
       });
     };
