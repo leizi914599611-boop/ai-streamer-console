@@ -53,8 +53,10 @@ ensure_repo() {
     return 0
   fi
   if [ ! -d "${REPO_DIR}/${name}/.git" ]; then
-    log "克隆上游仓库 ${upstream}"
-    git clone --depth 1 "${upstream}" "${REPO_DIR}/${name}" || return 1
+    log "克隆上游仓库 ${upstream}（git 走 network_turbo 代理，pip 不受影响）"
+    # 仅 git 在子 shell 内启用 network_turbo 代理，避免污染 pip/hf-mirror 的镜像直连
+    ( source /etc/network_turbo >/dev/null 2>&1 || true; \
+      git clone --depth 1 "${upstream}" "${REPO_DIR}/${name}" ) || return 1
   fi
   echo "${REPO_DIR}/${name}"
 }
