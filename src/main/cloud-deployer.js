@@ -369,7 +369,7 @@ class CloudDeployer extends EventEmitter {
     this.config.set('cloud.autoDL.vramMb', GPU_SPECS[gpu].vramMb);
     const totalSec = Math.floor((Date.now() - startedAt) / 1000);
     this._progress(serviceId, 'done', `部署完成 ✔ ${endpoint}（${chosen.name} · 服务就绪耗时 ${totalSec}s）`);
-    return { uuid, endpoint, dataCenter: dataCenterFinal, elapsedSec: totalSec };
+    return { uuid, endpoint, dataCenter: chosen.dataCenter, elapsedSec: totalSec };
   }
 
   /** 保存当前实例为私有镜像，写入 cloud.autoDL.imageUuid（之后部署免安装） */
