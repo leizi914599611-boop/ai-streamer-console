@@ -50,11 +50,22 @@ class StreamPreview extends EventEmitter {
   }
 
   async start({ source, fps, width, height } = {}) {
+    // 并发锁：HTTP server listen 回调前快速连点会重入
+    if (this._startingPromise) return this._startingPromise;
+
     // 已在跑且参数一致 → 只返回快照
     if (this.server && this.child) {
       const sameSource = source === undefined || source === this.source;
-      if (sameSource) return this.snapshot();
-      // 源变了 → 热切换 ffmpeg
+      if (sameSource && (fps === undefined || fps === this.fps) &&
+          (width === undefined || width === this.width) &&
+          (height === undefined || height === this.height)) {
+        return this.snapshot();
+      }
+      // 源/尺寸变了 → 热切换 ffmpeg（server 端口不动）
+      if (sameSource && source !== undefined) this.source = source;
+      if (fps) this.fps = fps;
+      if (width) this.width = width;
+      if (height) this.height = height;
       this._spawnFfmpeg();
       return this.snapshot();
     }
@@ -75,15 +86,19 @@ class StreamPreview extends EventEmitter {
     this.fsClosed = false;
 
     this.server = http.createServer((req, res) => this._onRequest(req, res));
-    await new Promise((resolve, reject) => {
-      const onErr = (err) => { this.server.removeListener('listening', onListening); reject(err); };
-      const onListening = () => { this.server.removeListener('error', onErr); resolve(); };
-      this.server.once('error', onErr);
-      this.server.once('listening', onListening);
-      this.server.listen(0, '127.0.0.1');
-    });
-    this.port = this.server.address().port;
-    this.logger.info('preview', `预览 HTTP server http://127.0.0.1:${this.port} ${this.source ? path.basename(this.source) : 'testsrc'}`);
+    this._startingPromise = (async () => {
+      await new Promise((resolve, reject) => {
+        const onErr = (err) => { this.server.removeListener('listening', onListening); reject(err); };
+        const onListening = () => { this.server.removeListener('error', onErr); resolve(); };
+        this.server.once('error', onErr);
+        this.server.once('listening', onListening);
+        this.server.listen(0, '127.0.0.1');
+      });
+      this.port = this.server.address().port;
+      this.logger.info('preview', `预览 HTTP server http://127.0.0.1:${this.port} ${this.source ? path.basename(this.source) : 'testsrc'}`);
+    })().catch((err) => { this._startingPromise = null; throw err; });
+    await this._startingPromise;
+    this._startingPromise = null;
 
     this._spawnFfmpeg();
     this.startedAt = Date.now();
@@ -192,12 +207,14 @@ class StreamPreview extends EventEmitter {
     } else {
       args.push('-f', 'lavfi', '-i', `testsrc=size=${this.width}x${this.height}:rate=${this.fps}`);
     }
-    args.push(
+      args.push(
       '-an',                     // 预览只要画面
       '-f', 'mjpeg',
+      '-update', '1',            // MJPEG 单帧更新，浏览器重连友好
       '-q:v', '5',
       '-r', String(this.fps),
       '-s', `${this.width}x${this.height}`,
+      '-pix_fmt', 'yuvj420p',    // 消 swscaler deprecated 警告，兼容 Chromium MJPEG
       '-'
     );
 

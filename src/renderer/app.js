@@ -1768,6 +1768,9 @@ function startTicker() {
 }
 
 /* ================= 预览 ================= */
+let previewReconnects = 0;
+let previewReconnectTimer = null;
+
 function renderPreview() {
   const p = state.preview;
   const img = $('preview-img');
@@ -1794,17 +1797,46 @@ function renderPreview() {
     empty.classList.add('hidden');
     img.classList.remove('hidden');
     overlay.classList.remove('hidden');
+
+    // MJPEG 重连：ffmpeg 崩/网络瞬断时自动重试（指数退避，5min 封顶）
+    clearTimeout(previewReconnectTimer);
+    previewReconnectTimer = null;
+    previewReconnects = 0;
+    img.onload = () => { previewReconnects = 0; };
+    img.onerror = () => {
+      // 如果预览已停就不重试
+      if (!state.preview.running || !state.preview.url) return;
+      previewReconnects++;
+      const delay = Math.min(30000, 1000 * Math.pow(1.8, Math.min(previewReconnects, 8)));
+      toast(`预览断流，${Math.round(delay / 1000)}s 后自动重连（第 ${previewReconnects} 次）`, 'warn');
+      previewReconnectTimer = setTimeout(() => {
+        if (state.preview.running) {
+          img.src = state.preview.url + '?t=' + Date.now();
+        }
+      }, delay);
+    };
     img.src = p.url + '?t=' + Date.now();
   } else {
     img.classList.add('hidden');
     overlay.classList.add('hidden');
     empty.classList.remove('hidden');
+    clearTimeout(previewReconnectTimer);
+    previewReconnectTimer = null;
+    previewReconnects = 0;
+    img.onerror = null;
+    img.onload = null;
     img.removeAttribute('src');
   }
 
   $('preview-src').textContent = p.source ? (typeof p.source === 'string' && p.source.length > 40 ? p.source.slice(-28) : p.source) : (p.running ? 'testsrc' : '-');
   $('preview-fps').textContent = p.fps ? p.fps + ' fps' : '-';
   $('preview-clients').textContent = p.clients;
+  const statusDot = $('preview-status-dot');
+  if (statusDot) {
+    if (!p.running) statusDot.textContent = '● 未启动';
+    else if (previewReconnects > 0) statusDot.textContent = `● 重连中 ×${previewReconnects}`;
+    else statusDot.textContent = p.ffmpegAlive ? '● 正常' : '● ffmpeg 已退出';
+  }
   if (p.width && sizeSelect) {
     sizeSelect.value = `${p.width}x${p.height}`;
   }
