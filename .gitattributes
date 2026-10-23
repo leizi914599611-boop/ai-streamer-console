@@ -1,0 +1,2 @@
+# shell 脚本必须保持 LF（云端 Linux 执行，CRLF 会导致解释器报错）
+*.sh text eol=lf
