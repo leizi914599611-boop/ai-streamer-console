@@ -105,6 +105,12 @@ contextBridge.exposeInMainWorld('consoleApi', {
     status: () => invoke('download:status'),
     start: (id) => invoke('download:start', { id })
   },
+  preview: {
+    status: () => invoke('preview:status'),
+    start: (opts) => invoke('preview:start', opts),
+    stop: () => invoke('preview:stop'),
+    setSource: (source) => invoke('preview:set-source', { source })
+  },
   logs: {
     recent: (limit) => invoke('logs:recent', { limit })
   },

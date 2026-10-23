@@ -22,7 +22,7 @@ function wrap(fn) {
  * 主进程 IPC 注册：渲染进程通过 preload 暴露的 consoleApi 调用。
  */
 function registerIpc(ctx) {
-  const { config, logger, services, orchestrator, queue, stream, library, llm, tts, muse, soulx, realtime, interaction, danmuCtl, monitor, voices, cloudDeployer, downloadManager, appDir } = ctx;
+  const { config, logger, services, orchestrator, queue, stream, library, llm, tts, muse, soulx, realtime, interaction, danmuCtl, monitor, voices, cloudDeployer, downloadManager, preview, appDir } = ctx;
 
   ipcMain.handle('app:info', wrap(async () => ({
     appDir,
@@ -141,6 +141,21 @@ function registerIpc(ctx) {
   ipcMain.handle('download:start', wrap(async ({ id } = {}) => {
     if (!downloadManager) throw new Error('下载管理器未初始化');
     return downloadManager.start(id);
+  }));
+
+  ipcMain.handle('preview:status', wrap(async () => (preview ? preview.snapshot() : null)));
+  ipcMain.handle('preview:start', wrap(async (opts = {}) => {
+    if (!preview) throw new Error('预览模块未初始化');
+    return preview.start(opts);
+  }));
+  ipcMain.handle('preview:stop', wrap(async () => {
+    if (!preview) return null;
+    preview.stop();
+    return preview.snapshot();
+  }));
+  ipcMain.handle('preview:set-source', wrap(async ({ source } = {}) => {
+    if (!preview) throw new Error('预览模块未初始化');
+    return preview.setSource(source);
   }));
 
   ipcMain.handle('logs:recent', wrap(async ({ limit } = {}) => logger.recent(limit || 400)));

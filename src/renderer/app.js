@@ -22,7 +22,9 @@ const state = {
   busy: {},
   cloud: { progress: [] },
   downloads: [],
-  cloudStats: { balance: null, instances: [], error: '', updatedAt: 0 }
+  cloudStats: { balance: null, instances: [], error: '', updatedAt: 0 },
+  preview: { running: false, ffmpegAlive: false, url: '', source: '', fps: 30, width: 1280, height: 720, clients: 0, lastError: '' },
+  layout: { order: { services: [], sections: [] } }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -242,7 +244,8 @@ function renderServices() {
     const stopDisabled = (isCloud || (!running && svc.status !== 'starting'));
     const openDisabled = cloudNoEndpoint;
     return `
-      <div class="service-card" data-id="${esc(svc.id)}">
+      <div class="service-card" data-id="${esc(svc.id)}" draggable="true">
+        <div class="drag-handle" title="拖动排序">⋮⋮</div>
         <div class="service-top">
           <div>
             <div class="service-name">${esc(svc.name)} <span class="deploy-chip ${isCloud ? 'cloud' : 'local'}">${isCloud ? '云端' : '本地'}</span></div>
@@ -272,6 +275,7 @@ function renderServices() {
         </div>
       </div>`;
   }).join('');
+  applyServicesOrder();
 }
 
 $('service-grid').addEventListener('click', async (event) => {
@@ -1728,6 +1732,150 @@ function startTicker() {
   }, 1000);
 }
 
+/* ================= 预览 ================= */
+function renderPreview() {
+  const p = state.preview;
+  const img = $('preview-img');
+  const empty = $('preview-empty');
+  const overlay = $('preview-overlay');
+  const btn = $('btn-preview-toggle');
+  const urlSpan = $('preview-url');
+  const sizeSelect = $('preview-size');
+
+  // 按钮文字
+  if (p.running) {
+    btn.textContent = '停止预览';
+    btn.classList.add('danger');
+    btn.classList.remove('primary');
+  } else {
+    btn.textContent = '启动预览';
+    btn.classList.add('primary');
+    btn.classList.remove('danger');
+  }
+
+  urlSpan.textContent = p.url || (p.lastError ? `错误：${p.lastError}` : '-');
+
+  if (p.running && p.url) {
+    empty.classList.add('hidden');
+    img.classList.remove('hidden');
+    overlay.classList.remove('hidden');
+    img.src = p.url + '?t=' + Date.now();
+  } else {
+    img.classList.add('hidden');
+    overlay.classList.add('hidden');
+    empty.classList.remove('hidden');
+    img.removeAttribute('src');
+  }
+
+  $('preview-src').textContent = p.source ? (typeof p.source === 'string' && p.source.length > 40 ? p.source.slice(-28) : p.source) : (p.running ? 'testsrc' : '-');
+  $('preview-fps').textContent = p.fps ? p.fps + ' fps' : '-';
+  $('preview-clients').textContent = p.clients;
+  if (p.width && sizeSelect) {
+    sizeSelect.value = `${p.width}x${p.height}`;
+  }
+}
+
+function bindPreview() {
+  const btn = $('btn-preview-toggle');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    const p = state.preview;
+    try {
+      if (p.running) {
+        state.preview = await call(api.preview.stop(), '停止预览');
+      } else {
+        const size = $('preview-size')?.value || '1280x720';
+        const [w, h] = size.split('x').map(Number);
+        const autoSrc = (state.stream && state.stream.videoSource) || '';
+        const res = await call(api.preview.start({ source: autoSrc, width: w, height: h }), '启动预览');
+        state.preview = res;
+      }
+      renderPreview();
+    } catch (err) { /* toast 已提示 */ }
+  });
+
+  $('preview-size')?.addEventListener('change', async () => {
+    if (!state.preview.running) return;
+    const size = $('preview-size').value;
+    const [w, h] = size.split('x').map(Number);
+    try {
+      state.preview = await call(api.preview.start({ width: w, height: h }), '切换预览尺寸');
+      renderPreview();
+    } catch (_) {}
+  });
+
+  $('preview-source')?.addEventListener('change', async () => {
+    if (!state.preview.running) return;
+    const val = $('preview-source').value;
+    const src = val === 'auto' ? ((state.stream && state.stream.videoSource) || '') : '';
+    try {
+      state.preview = await call(api.preview.start({ source: src }), '切换预览源');
+      renderPreview();
+    } catch (_) {}
+  });
+
+  $('preview-refresh')?.addEventListener('click', () => {
+    if (state.preview.running) {
+      state.preview.url += ''; // noop
+      renderPreview();
+    }
+  });
+}
+
+/* ================= 拖拽排序 ================= */
+function applyServicesOrder() {
+  const grid = $('service-grid');
+  if (!grid) return;
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem('layout.order.services') || 'null'); } catch (_) { saved = null; }
+  if (!Array.isArray(saved)) return;
+  const cards = Array.from(grid.children);
+  const map = new Map(cards.map((c) => [c.dataset.id, c]));
+  const ordered = [];
+  for (const id of saved) if (map.has(id)) ordered.push(map.get(id));
+  for (const card of cards) if (!ordered.includes(card)) ordered.push(card);
+  grid.innerHTML = '';
+  ordered.forEach((c) => grid.appendChild(c));
+}
+
+function bindServicesDrag() {
+  const grid = $('service-grid');
+  if (!grid) return;
+  let dragging = null;
+
+  grid.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('.service-card');
+    if (!card || !card.dataset.id) return;
+    dragging = card;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', card.dataset.id);
+  });
+
+  grid.addEventListener('dragend', () => {
+    if (dragging) dragging.classList.remove('dragging');
+    dragging = null;
+  });
+
+  grid.addEventListener('dragover', (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const card = e.target.closest('.service-card');
+    if (!card || card === dragging) return;
+    const rect = card.getBoundingClientRect();
+    const insertBefore = e.clientY < rect.top + rect.height / 2;
+    grid.insertBefore(dragging, insertBefore ? card : card.nextSibling);
+  });
+
+  grid.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const ids = Array.from(grid.querySelectorAll('.service-card')).map((c) => c.dataset.id).filter(Boolean);
+    localStorage.setItem('layout.order.services', JSON.stringify(ids));
+  });
+}
+
 /* ================= 初始化 ================= */
 async function init() {
   bindNav();
@@ -1770,6 +1918,14 @@ async function init() {
   refreshCapabilities();
   refreshDownloads();
   refreshCloudOverview();
+  // 预览 + 拖拽在 renderServices 之后，因为 innerHTML 重绘后 DOM 引用会失效
+  applyServicesOrder();
+  bindServicesDrag();
+  bindPreview();
+  try {
+    state.preview = await call(api.preview.status(), '读取预览状态');
+    renderPreview();
+  } catch (_) {}
 }
 
 api.onEvent(({ type, payload }) => {
@@ -1869,6 +2025,11 @@ api.onEvent(({ type, payload }) => {
         renderKpis();
       }).catch(() => {});
     }
+    return;
+  }
+  if (type === 'preview') {
+    state.preview = payload;
+    renderPreview();
     return;
   }
 });

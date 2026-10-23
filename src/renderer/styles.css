@@ -623,3 +623,114 @@ button, input, select, textarea {
   .svc-row.is-cloud { grid-template-columns: 1fr; }
   .check-results { grid-template-columns: 1fr; }
 }
+
+
+/* ========================================== */
+/* ---------- 预览播放器 ---------- */
+/* ========================================== */
+.preview-panel { padding: 0; overflow: hidden; }
+.preview-stage {
+  position: relative; width: 100%; aspect-ratio: 16 / 9;
+  background: #03060a; overflow: hidden;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.preview-stage::before {
+  content: ''; position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,0.015) 2px 3px);
+  pointer-events: none; z-index: 1;
+}
+.preview-empty {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--muted); text-align: center;
+}
+.preview-placeholder { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.preview-eye {
+  font-size: 42px; color: var(--accent); opacity: .55;
+  text-shadow: 0 0 24px rgba(92,200,255,0.35);
+}
+.preview-img {
+  width: 100%; height: 100%; object-fit: contain;
+  background: #000; display: block;
+}
+.preview-overlay {
+  position: absolute; right: 12px; bottom: 12px; z-index: 3;
+  display: flex; gap: 10px; align-items: center;
+  padding: 6px 10px; border-radius: 8px;
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.preview-stat {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 44px;
+}
+.preview-stat b { font-size: 13px; font-family: var(--mono); color: #fff; font-weight: 600; }
+.preview-stat span { font-size: 9.5px; color: #9fa9b8; letter-spacing: .4px; }
+
+.preview-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; border-top: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, rgba(14,19,27,0.6), rgba(10,14,20,0.9));
+}
+.preview-toolbar select, .preview-toolbar input {
+  background: #0b1118; border: 1px solid var(--border-soft);
+  color: var(--text); font-size: 11px; padding: 4px 8px; border-radius: 6px;
+}
+.preview-toolbar .mono { font-size: 10.5px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ========================================== */
+/* ---------- 拖拽排序 ---------- */
+/* ========================================== */
+.service-card {
+  cursor: grab; position: relative;
+  transition: transform .15s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.service-card:hover {
+  border-color: rgba(92,200,255,0.28);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.35), 0 0 0 1px rgba(92,200,255,0.08);
+  transform: translateY(-1px);
+}
+.service-card.dragging {
+  opacity: .42; transform: scale(0.97);
+  border-color: rgba(92,200,255,0.55);
+  box-shadow: 0 0 0 2px rgba(92,200,255,0.4), 0 10px 24px rgba(0,0,0,0.55);
+  cursor: grabbing;
+}
+.drag-handle {
+  position: absolute; top: 10px; left: 10px;
+  font-family: var(--mono); font-size: 14px; line-height: 10px;
+  color: #3d4a5d; cursor: grab; user-select: none;
+  letter-spacing: -1px;
+  width: 18px; height: 18px; display: grid; place-items: center;
+  border-radius: 5px;
+}
+.drag-handle:hover { color: #7a8ca3; background: rgba(92,200,255,0.08); }
+.service-top { padding-left: 18px; }
+
+/* ========================================== */
+/* ---------- 整体美化 ---------- */
+/* ========================================== */
+.panel {
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.02) inset,
+    0 0 0 1px rgba(0,0,0,0.2);
+}
+.btn.primary::after {
+  content: ''; position: absolute; inset: -1px; border-radius: inherit;
+  background: linear-gradient(135deg, rgba(92,200,255,0.3), rgba(167,139,250,0.3));
+  z-index: -1; opacity: 0; transition: opacity .2s ease;
+}
+.btn.primary:hover::after { opacity: 1; }
+
+.view h2 { position: relative; padding-left: 12px; }
+.view h2::before {
+  content: ''; position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: 3px; border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+}
+
+.kpi::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(92,200,255,0.22), transparent);
+}
+.kpi { position: relative; }

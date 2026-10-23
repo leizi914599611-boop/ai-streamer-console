@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' file:;" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' file: http://127.0.0.1:* http://localhost:*;" />
   <title>AI 歌手直播控制台</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -308,8 +308,42 @@
               <p class="muted">ffmpeg 将当前画面与音轨推送到 RTMP 服务（抖音 / B站 / 视频号等）</p>
             </div>
             <div class="view-actions">
+              <button class="btn" id="btn-preview-toggle">启动预览</button>
               <button class="btn primary" id="btn-stream-start">开始推流</button>
               <button class="btn danger" id="btn-stream-stop">停止推流</button>
+            </div>
+          </div>
+
+          <div class="panel preview-panel">
+            <div class="preview-stage" id="preview-stage">
+              <div class="preview-empty" id="preview-empty">
+                <div class="preview-placeholder">
+                  <div class="preview-eye">◉</div>
+                  <div>点击右上角<strong>启动预览</strong>，实时查看推流画面</div>
+                  <div class="muted">MJPEG 本地流，推流开始时自动跟随</div>
+                </div>
+              </div>
+              <img id="preview-img" class="hidden" alt="直播画面预览" />
+              <div class="preview-overlay hidden" id="preview-overlay">
+                <div class="preview-stat"><b id="preview-src">-</b><span>预览源</span></div>
+                <div class="preview-stat"><b id="preview-fps">-</b><span>FPS</span></div>
+                <div class="preview-stat"><b id="preview-clients">-</b><span>观看</span></div>
+              </div>
+            </div>
+            <div class="preview-toolbar">
+              <span class="muted">预览源</span>
+              <select id="preview-source">
+                <option value="auto">跟随推流视频源（自动）</option>
+                <option value="testsrc">测试画面（testsrc）</option>
+              </select>
+              <span class="muted">尺寸</span>
+              <select id="preview-size">
+                <option value="1280x720">1280×720</option>
+                <option value="1920x1080">1920×1080</option>
+                <option value="640x360">640×360</option>
+              </select>
+              <button class="btn tiny ghost" id="preview-refresh">重新加载</button>
+              <span class="muted mono" id="preview-url">-</span>
             </div>
           </div>
 

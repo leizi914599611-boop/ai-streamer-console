@@ -24,6 +24,7 @@ const { SystemMonitor } = require('./system-monitor');
 const { VoiceLibrary } = require('./voice-library');
 const { CloudDeployer } = require('./cloud-deployer');
 const { DownloadManager } = require('./download-manager');
+const { StreamPreview } = require('./stream-preview');
 const { registerIpc } = require('./ipc');
 
 const appDir = path.resolve(__dirname, '..', '..');
@@ -58,6 +59,7 @@ const monitor = new SystemMonitor({ config, logger, services });
 const voices = new VoiceLibrary({ config, logger, soulx });
 const cloudDeployer = new CloudDeployer({ config, logger });
 const downloadManager = new DownloadManager({ config, logger, services });
+const preview = new StreamPreview({ config, logger });
 
 let mainWindow = null;
 
@@ -70,13 +72,24 @@ logger.on('log', (entry) => broadcast('log', entry));
 services.on('status', (snap) => broadcast('service', snap));
 orchestrator.on('state', (snap) => broadcast('orchestrator', snap));
 queue.on('job', (job) => broadcast('queue', job));
-stream.on('stream', (snap) => broadcast('stream', snap));
 interaction.on('turn', (payload) => broadcast('interaction', payload));
 danmuCtl.on('events', (events) => broadcast('danmu', { events }));
 danmuCtl.on('state', (snap) => broadcast('danmuState', snap));
 monitor.on('stats', (snap) => broadcast('system', snap));
 cloudDeployer.on('progress', (payload) => broadcast('cloud', payload));
 downloadManager.on('progress', (payload) => broadcast('download', payload));
+preview.on('preview', (snap) => broadcast('preview', snap));
+
+// 推流状态变化 → 预览自动启停 & 同步源
+stream.on('stream', (snap) => {
+  broadcast('stream', snap);
+  if (snap.status === 'live' || snap.status === 'starting') {
+    if (!preview.server) preview.start({ source: snap.videoSource });
+    else preview.setSource(snap.videoSource);
+  } else if (snap.status === 'offline' || snap.status === 'stopped') {
+    // 推流停了不强制停预览，预览可以独立开（便于先看效果再开推流）
+  }
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -121,7 +134,7 @@ function createWindow() {
 
 registerIpc({
   config, logger, services, orchestrator, queue, stream, library, llm, tts, muse, soulx, realtime, interaction, danmuCtl,
-  monitor, voices, cloudDeployer, downloadManager, appDir
+  monitor, voices, cloudDeployer, downloadManager, preview, appDir
 });
 
 app.whenReady().then(async () => {
@@ -150,6 +163,7 @@ app.on('before-quit', async (event) => {
   logger.info('app', '正在关闭：停止所有子服务');
   try {
     monitor.stop();
+    preview.dispose();
     stream.stop();
     danmuCtl.stop();
     await services.stopAll();
