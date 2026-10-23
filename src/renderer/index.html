@@ -186,13 +186,8 @@
             <div class="cloud-ov-deploy">
               <span class="muted">一键部署</span>
               <select id="ov-deploy-service"></select>
-              <select id="ov-deploy-gpu">
-                <option value="4090D">4090D · 24G（推理首选）</option>
-                <option value="v-48g">4090 · 48G（训练/大模型）</option>
-                <option value="5090-p">5090 · 32G</option>
-              </select>
               <button class="btn tiny primary" id="btn-ov-deploy">创建实例并部署</button>
-              <span class="muted" id="ov-deploy-hint">首次部署需安装环境，之后可保存为私有镜像</span>
+              <span class="muted" id="ov-deploy-hint">点击后选择算力规格，5 秒不选自动采用最低价位</span>
             </div>
             <div class="cloud-ov-progress" id="ov-cloud-progress"></div>
           </div>
@@ -598,6 +593,20 @@
         <div class="log-body" id="log-body"></div>
       </footer>
     </main>
+  </div>
+
+  <div class="modal-mask hidden" id="gpu-picker">
+    <div class="modal-panel">
+      <div class="modal-title">选择云端算力</div>
+      <div class="modal-sub muted" id="gpu-picker-sub"></div>
+      <div class="gpu-options" id="gpu-options"></div>
+      <div class="modal-foot">
+        <span class="muted" id="gpu-countdown"></span>
+        <span class="grow"></span>
+        <button class="btn tiny ghost" id="gpu-cancel">取消</button>
+        <button class="btn tiny primary" id="gpu-confirm">确认创建</button>
+      </div>
+    </div>
   </div>
 
   <div class="toast-stack" id="toast-stack"></div>

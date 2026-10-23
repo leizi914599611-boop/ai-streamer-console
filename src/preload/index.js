@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('consoleApi', {
   },
   cloud: {
     balance: () => invoke('cloud:balance'),
+    gpuSpecs: () => invoke('cloud:gpu-specs'),
     deploy: (serviceId, gpuSpecUuid) => invoke('cloud:deploy', { serviceId, gpuSpecUuid }),
     instances: () => invoke('cloud:instances'),
     release: (serviceId) => invoke('cloud:release', { serviceId }),

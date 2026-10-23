@@ -4,6 +4,7 @@ const { ipcMain, shell, dialog, BrowserWindow } = require('electron');
 const path = require('path');
 const { GROUPS } = require('./config-schema');
 const { capabilities } = require('./training');
+const { GPU_SPECS } = require('./cloud-deployer');
 
 function ok(data) { return { ok: true, data }; }
 function fail(error) { return { ok: false, error: error.message || String(error) }; }
@@ -131,6 +132,9 @@ function registerIpc(ctx) {
   ipcMain.handle('realtime:unload', wrap(async () => realtime.unload()));
 
   ipcMain.handle('cloud:balance', wrap(async () => cloudDeployer.balance()));
+  ipcMain.handle('cloud:gpu-specs', wrap(async () => Object.entries(GPU_SPECS)
+    .map(([id, v]) => ({ id, ...v }))
+    .sort((a, b) => a.priceRank - b.priceRank)));
   ipcMain.handle('cloud:deploy', wrap(async ({ serviceId, gpuSpecUuid } = {}) => cloudDeployer.deploy({ serviceId, gpuSpecUuid })));
   ipcMain.handle('cloud:instances', wrap(async () => cloudDeployer.instances()));
   ipcMain.handle('cloud:release', wrap(async ({ serviceId } = {}) => cloudDeployer.release({ serviceId })));

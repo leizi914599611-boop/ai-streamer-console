@@ -459,16 +459,81 @@ $('btn-ov-cloud-refresh').addEventListener('click', async () => {
     state.cloudStats.error ? 'warn' : 'success');
 });
 
-$('btn-ov-deploy').addEventListener('click', async () => {
-  const serviceId = $('ov-deploy-service').value;
-  const gpu = $('ov-deploy-gpu').value;
+/* ============ 云端算力选择弹窗（5 秒倒计时，超时采用最低价位） ============ */
+const GPU_PICKER_SECONDS = 5;
+let gpuPicker = null;
+
+function pushCloudProgress(serviceId, step, message) {
+  state.cloud.progress.push({ serviceId, step, message, ts: Date.now() });
+  if (state.cloud.progress.length > 200) state.cloud.progress.shift();
+  renderOvCloudProgress();
+  renderCloudProgress();
+}
+
+function renderGpuOptions() {
+  if (!gpuPicker) return;
+  const cheapestId = gpuPicker.specs[0].id;
+  $('gpu-options').innerHTML = gpuPicker.specs.map((s) => `
+    <div class="gpu-opt ${s.id === gpuPicker.selected ? 'active' : ''}" data-gpu="${esc(s.id)}">
+      <span class="gpu-radio"></span>
+      <span class="gpu-opt-body">
+        <div class="gpu-opt-label">${esc(s.label)}</div>
+        <div class="gpu-opt-meta">${s.vramMb ? `${Math.round(s.vramMb / 1024)}GB 显存 · ${esc(s.priceLabel || '')}` : ''}</div>
+      </span>
+      ${s.id === cheapestId ? '<span class="gpu-tag">最便宜</span>' : ''}
+    </div>`).join('');
+}
+
+function renderGpuCountdown() {
+  if (!gpuPicker) return;
+  const cur = gpuPicker.specs.find((s) => s.id === gpuPicker.selected);
+  $('gpu-countdown').textContent = cur ? `${gpuPicker.left} 秒后自动创建「${cur.label}」` : '';
+}
+
+function startGpuCountdown() {
+  gpuPicker.left = GPU_PICKER_SECONDS;
+  renderGpuCountdown();
+  gpuPicker.timer = setInterval(() => {
+    if (!gpuPicker) return;
+    gpuPicker.left -= 1;
+    if (gpuPicker.left <= 0) { closeGpuPicker(true); return; }
+    renderGpuCountdown();
+  }, 1000);
+}
+
+async function openGpuPicker(serviceId) {
+  if (gpuPicker) return;
+  let specs;
+  try {
+    specs = await call(api.cloud.gpuSpecs(), '读取算力规格');
+  } catch (_) { return; }
+  if (!specs || !specs.length) { toast('没有可用的算力规格', 'warn'); return; }
+  gpuPicker = { specs, selected: specs[0].id, timer: null, serviceId };
+  $('gpu-picker-sub').textContent = `服务 ${serviceId} · 将创建按量计费实例；不操作则 ${GPU_PICKER_SECONDS} 秒后采用最低价位（${specs[0].label}）`;
+  renderGpuOptions();
+  startGpuCountdown();
+  $('gpu-picker').classList.remove('hidden');
+}
+
+function closeGpuPicker(confirm) {
+  if (!gpuPicker) return;
+  clearInterval(gpuPicker.timer);
+  const { serviceId, selected: gpu } = gpuPicker;
+  gpuPicker = null;
+  $('gpu-picker').classList.add('hidden');
+  if (confirm) doDeploy(serviceId, gpu);
+}
+
+async function doDeploy(serviceId, gpu) {
   if (!serviceId) { toast('请选择要部署的服务', 'warn'); return; }
   const btn = $('btn-ov-deploy');
   btn.disabled = true;
   try {
     const result = await call(api.cloud.deploy(serviceId, gpu), `部署 ${serviceId}`);
     toast(`${serviceId} 部署完成: ${result.endpoint}`, 'success');
-  } catch (_) { /* toast 已提示 */ } finally {
+  } catch (err) {
+    pushCloudProgress(serviceId, 'error', `部署失败: ${(err && err.message) || err}`);
+  } finally {
     btn.disabled = false;
     try {
       state.config = await call(api.config.get(), '读取配置');
@@ -480,7 +545,22 @@ $('btn-ov-deploy').addEventListener('click', async () => {
     renderKpis();
     refreshCloudOverview();
   }
+}
+
+$('gpu-options').addEventListener('click', (event) => {
+  const opt = event.target.closest('[data-gpu]');
+  if (!opt || !gpuPicker) return;
+  gpuPicker.selected = opt.dataset.gpu;
+  renderGpuOptions();
+  renderGpuCountdown();
 });
+$('gpu-cancel').addEventListener('click', () => closeGpuPicker(false));
+$('gpu-confirm').addEventListener('click', () => closeGpuPicker(true));
+$('gpu-picker').addEventListener('click', (event) => {
+  if (event.target === $('gpu-picker')) closeGpuPicker(false);
+});
+
+$('btn-ov-deploy').addEventListener('click', () => openGpuPicker($('ov-deploy-service').value));
 
 $('ov-cloud-instances').addEventListener('click', async (event) => {
   const btn = event.target.closest('button[data-ci]');
@@ -501,7 +581,9 @@ $('ov-cloud-instances').addEventListener('click', async (event) => {
       await call(api.cloud.release(id), '释放实例');
       toast(`${id} 实例已释放，已切回本地模式`, 'success');
     }
-  } catch (_) { /* toast 已提示 */ } finally {
+  } catch (err) {
+    pushCloudProgress(id, action, `${action} 失败: ${(err && err.message) || err}`);
+  } finally {
     btn.disabled = false;
     try {
       state.config = await call(api.config.get(), '读取配置');
@@ -1228,11 +1310,6 @@ $('service-settings').addEventListener('change', (event) => {
 });
 
 /* ================= 云端部署（AutoDL） ================= */
-const CLOUD_GPU_OPTIONS = [
-  { value: '4090D', label: '4090D · 24G（推理）' },
-  { value: 'v-48g', label: '4090 · 48G（训练）' },
-  { value: '5090-p', label: '5090 · 32G' }
-];
 /** 弹幕抓取依赖本地登录环境，不参与云端部署 */
 const CLOUD_DEPLOYABLE = ['realtime', 'svs', 'svc', 'latentsync'];
 
@@ -1256,8 +1333,6 @@ function renderCloudPanel() {
     const rec = instances[svc.id];
     const isCloud = svc.mode === 'cloud';
     const last = [...state.cloud.progress].reverse().find((p) => p.serviceId === svc.id);
-    const gpuOpts = CLOUD_GPU_OPTIONS.map((o) =>
-      `<option value="${o.value}" ${o.value === (autoDL.gpuSpec || '4090D') ? 'selected' : ''}>${o.label}</option>`).join('');
     return `
     <div class="cloud-deploy-row" data-id="${esc(svc.id)}">
       <div class="cloud-deploy-name">
@@ -1265,7 +1340,6 @@ function renderCloudPanel() {
         <span class="deploy-chip ${isCloud ? 'cloud' : 'local'}">${isCloud ? '云端' : '本地'}</span>
         ${rec ? `<span class="muted cloud-uuid" title="实例 ID">${esc(rec.uuid)}</span>` : ''}
       </div>
-      <select class="cloud-gpu" data-cloud-gpu="${esc(svc.id)}" ${rec ? 'disabled' : ''}>${gpuOpts}</select>
       <div class="cloud-deploy-actions">
         <button class="btn tiny primary" data-cloud-action="deploy" data-cloud-id="${esc(svc.id)}" ${rec ? 'disabled' : ''}>部署到云端</button>
         <button class="btn tiny" data-cloud-action="save-image" data-cloud-id="${esc(svc.id)}" ${rec ? '' : 'disabled'}>保存为镜像</button>
@@ -1306,13 +1380,10 @@ $('cloud-deploy-list').addEventListener('click', async (event) => {
   const id = btn.dataset.cloudId;
   const action = btn.dataset.cloudAction;
   if (action === 'release' && !window.confirm(`确认释放 ${id} 的云端实例？将停止计费并切回本地模式`)) return;
+  if (action === 'deploy') { openGpuPicker(id); return; }
   btn.disabled = true;
   try {
-    if (action === 'deploy') {
-      const gpu = document.querySelector(`select[data-cloud-gpu="${id}"]`)?.value;
-      const result = await call(api.cloud.deploy(id, gpu), `部署 ${id}`);
-      toast(`${id} 部署完成: ${result.endpoint}`, 'success');
-    } else if (action === 'save-image') {
+    if (action === 'save-image') {
       const result = await call(api.cloud.saveImage(id), '保存镜像');
       toast(result.imageUuid ? `镜像已保存: ${result.imageUuid}` : '镜像保存任务已提交，请到 AutoDL 控制台确认', 'success');
     } else if (action === 'release') {

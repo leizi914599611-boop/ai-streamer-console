@@ -5,11 +5,11 @@ const { EventEmitter } = require('events');
 /** AutoDL OpenAPI HOST（鉴权: Authorization: <开发者Token>，均为 POST JSON） */
 const API_HOST = 'https://api.autodl.com';
 
-/** GPU 规格 → 显存（用于能力矩阵合并） */
+/** GPU 规格 → 显存（用于能力矩阵合并）；priceRank 越小越便宜（AutoDL 无价格查询接口，按档位标注） */
 const GPU_SPECS = {
-  '4090D': { label: 'RTX 4090D · 24GB（推理首选）', vramMb: 24576 },
-  'v-48g': { label: 'RTX 4090 · 48GB（训练/大模型）', vramMb: 49152 },
-  '5090-p': { label: 'RTX 5090 · 32GB', vramMb: 32768 }
+  '4090D': { label: 'RTX 4090D · 24GB（推理首选）', vramMb: 24576, priceRank: 1, priceLabel: '最低价位' },
+  'v-48g': { label: 'RTX 4090 · 48GB（训练/大模型）', vramMb: 49152, priceRank: 2, priceLabel: '中价位' },
+  '5090-p': { label: 'RTX 5090 · 32GB', vramMb: 32768, priceRank: 3, priceLabel: '较高价位' }
 };
 
 /** 公共基础镜像 cuda11.8 + torch2.0（未保存私有镜像前的首次部署使用） */
