@@ -80,10 +80,11 @@ class CloudDeployer extends EventEmitter {
     return { assets, yuan: assets / 1000 };
   }
 
-  /** 已保存的私有镜像列表 */
+  /** 已保存的私有镜像列表（空列表时接口返回 list: null） */
   async listImages() {
     const data = await this._request('/api/v1/dev/instance/pro/image/private/list', { page_index: 1, page_size: 50 });
-    return data?.list || data || [];
+    if (Array.isArray(data)) return data;
+    return data && Array.isArray(data.list) ? data.list : [];
   }
 
   _serviceSpec(serviceId) {
