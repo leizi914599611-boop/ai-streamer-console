@@ -21,6 +21,7 @@ fi
 
 APP_DIR=/root/app
 REPO_DIR=/root/repos
+BRANCH="${BRANCH:-main}"
 DONE_MARK="/root/.bootstrap_done_${SERVICE}"
 LOG_FILE="/root/bootstrap_${SERVICE}.log"
 
@@ -28,7 +29,7 @@ export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 export PYTHONUNBUFFERED=1
 
-log() { echo "[bootstrap $(date +%H:%M:%S)] $*"; }
+log() { echo "[bootstrap $(date +%H:%M:%S)] $*" >&2; }
 
 # AutoDL 学术资源加速（GitHub / HF / pip 均受益）
 if [ -f /etc/network_turbo ]; then
@@ -39,6 +40,27 @@ fi
 
 mkdir -p "${REPO_DIR}"
 cd "${APP_DIR}" 2>/dev/null || { log "缺少 ${APP_DIR}（start_command 应先 git clone 控制台仓库）"; exit 1; }
+
+# ---- 跟随 GitHub 仓库更新（私有镜像二次启动也会拉到最新代码）----
+# 命中更新时 re-exec 自己，避免 bash 继续读取被替换的脚本文件。
+sync_app_repo() {
+  [ -d "${APP_DIR}/.git" ] || return 1
+  local before after
+  before="$(git -C "${APP_DIR}" rev-parse HEAD 2>/dev/null || echo none)"
+  git -C "${APP_DIR}" fetch --depth 1 origin "${BRANCH}" >/dev/null 2>&1 || return 1
+  git -C "${APP_DIR}" reset --hard FETCH_HEAD >/dev/null 2>&1 || return 1
+  after="$(git -C "${APP_DIR}" rev-parse HEAD 2>/dev/null || echo none)"
+  [ "${before}" != "${after}" ]
+}
+
+if [ "${SKIP_APP_SYNC:-0}" != "1" ] && [ -d "${APP_DIR}/.git" ]; then
+  if sync_app_repo; then
+    log "控制台仓库已更新到 ${BRANCH} 最新提交，重新执行自举脚本"
+    SKIP_APP_SYNC=1 exec bash "${APP_DIR}/deploy/cloud_bootstrap.sh" "$@"
+  else
+    log "控制台仓库无更新或同步失败，沿用当前版本"
+  fi
+fi
 
 CONDA_BASE="$(conda info --base 2>/dev/null || echo /root/miniconda3)"
 # shellcheck disable=SC1091
@@ -87,8 +109,26 @@ start_service() {
   log "启动服务: $* (cwd=${workdir})"
   nohup "$@" >>"${LOG_FILE}" 2>&1 &
   disown
+  # 记录依赖清单指纹，供下次启动判断是否需要刷新
+  if [ -f "${workdir}/requirements.txt" ]; then
+    sha1sum "${workdir}/requirements.txt" | cut -d' ' -f1 > "${DONE_MARK}.deps"
+  fi
   touch "${DONE_MARK}"
   log "已在后台启动，日志: ${LOG_FILE}"
+}
+
+# 依赖清单变化时刷新环境（私有镜像跟随仓库更新）
+refresh_deps() {
+  # $1=conda 环境名 $2=仓库目录
+  local env="$1" repo="$2" want have
+  [ -f "${repo}/requirements.txt" ] || return 0
+  want="$(sha1sum "${repo}/requirements.txt" | cut -d' ' -f1)"
+  have="$(cat "${DONE_MARK}.deps" 2>/dev/null || true)"
+  [ "${want}" = "${have}" ] && return 0
+  log "依赖清单有变化，刷新 ${env} 环境依赖"
+  conda activate "${env}" >/dev/null 2>&1 || return 1
+  pip install -r "${repo}/requirements.txt" 2>&1 | tail -3 || true
+  echo "${want}" > "${DONE_MARK}.deps"
 }
 
 install_realtime() {
@@ -136,20 +176,32 @@ install_latentsync() {
   start_service "${repo}" python gradio_app.py --port 6006
 }
 
-# 二次启动（私有镜像已含环境）：直接起服务
+# 二次启动（私有镜像已含环境）：先按需刷新依赖，再直接起服务
 quick_start() {
-  local repo
+  local env repo cmd
   case "${SERVICE}" in
-    realtime) repo="$(ensure_repo MuseTalk https://github.com/TMElyralab/MuseTalk.git)" && \
-      { conda activate musetalk; start_service "${repo}" python scripts/realtime_service.py --port 6006; } ;;
-    svs) repo="$(ensure_repo SoulX-Singer https://github.com/Soul-AILab/SoulX-Singer.git)" && \
-      { conda activate soulxsinger; start_service "${repo}" python webui.py --port 6006 --fp16; } ;;
-    svc) repo="$(ensure_repo SoulX-Singer https://github.com/Soul-AILab/SoulX-Singer.git)" && \
-      { conda activate soulxsinger; start_service "${repo}" python webui_svc.py --port 6006 --fp16; } ;;
-    latentsync) repo="$(ensure_repo LatentSync https://github.com/bytedance/LatentSync.git)" && \
-      { conda activate latentsync; start_service "${repo}" python gradio_app.py --port 6006; } ;;
-    *) log "未知服务: ${SERVICE}"; exit 1 ;;
+    realtime)
+      env=musetalk
+      repo="$(ensure_repo MuseTalk https://github.com/TMElyralab/MuseTalk.git)" || return 1
+      cmd="python scripts/realtime_service.py --port 6006" ;;
+    svs)
+      env=soulxsinger
+      repo="$(ensure_repo SoulX-Singer https://github.com/Soul-AILab/SoulX-Singer.git)" || return 1
+      cmd="python webui.py --port 6006 --fp16" ;;
+    svc)
+      env=soulxsinger
+      repo="$(ensure_repo SoulX-Singer https://github.com/Soul-AILab/SoulX-Singer.git)" || return 1
+      cmd="python webui_svc.py --port 6006 --fp16" ;;
+    latentsync)
+      env=latentsync
+      repo="$(ensure_repo LatentSync https://github.com/bytedance/LatentSync.git)" || return 1
+      cmd="python gradio_app.py --port 6006" ;;
+    *) log "未知服务: ${SERVICE}"; return 1 ;;
   esac
+  refresh_deps "${env}" "${repo}"
+  conda activate "${env}" || return 1
+  # shellcheck disable=SC2086
+  start_service "${repo}" ${cmd}
 }
 
 if [ -f "${DONE_MARK}" ]; then

@@ -139,10 +139,22 @@ class CloudDeployer extends EventEmitter {
     if (!GPU_SPECS[gpu]) throw new Error(`未知 GPU 规格: ${gpu}`);
     const imageUuid = this.config.get('cloud.autoDL.imageUuid', '');
 
-    // start_command：仓库不在则克隆，然后执行仓库内自举脚本（幂等）
+    // 私有镜像二次启动也跟随 GitHub 仓库更新（可用 cloud.autoDL.syncOnStart 关闭）
+    const syncOnStart = this.config.get('cloud.autoDL.syncOnStart', true) !== false;
+    const appSync = syncOnStart
+      ? [
+          'if [ -d /root/app/.git ]; then',
+          `( git -C /root/app remote set-url origin ${repoUrl} 2>/dev/null || git -C /root/app remote add origin ${repoUrl} 2>/dev/null || true;`,
+          `git -C /root/app fetch --depth 1 origin ${branch} && git -C /root/app reset --hard FETCH_HEAD )`,
+          '|| echo "[deploy] 代码同步失败，沿用镜像内版本";',
+          `else git clone --depth 1 -b ${branch} ${repoUrl} /root/app; fi;`
+        ].join(' ')
+      : `([ -d /root/app ] || git clone --depth 1 -b ${branch} ${repoUrl} /root/app);`;
+
+    // start_command：同步仓库（无则克隆）后执行仓库内自举脚本（幂等）
     const startCommand = [
       'source /etc/network_turbo 2>/dev/null || true;',
-      `([ -d /root/app ] || git clone --depth 1 -b ${branch} ${repoUrl} /root/app);`,
+      appSync,
       `bash /root/app/deploy/cloud_bootstrap.sh ${serviceId} >> /root/bootstrap_${serviceId}_cmd.log 2>&1`
     ].join(' ');
 
