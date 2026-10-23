@@ -1082,6 +1082,39 @@ async function saveControls(container) {
   return skipped;
 }
 
+/** 保存所有服务卡设置（端口/解释器/模式/autoStart/云端 endpoint 等） */
+async function saveAllServiceRows() {
+  const rows = Array.from(document.querySelectorAll('#service-settings .svc-row'));
+  const tasks = rows.map((row) => {
+    const id = row.dataset.id;
+    const mode = row.querySelector('[data-svc-field="mode"]')?.value || 'local';
+    const patch = { mode };
+    row.querySelectorAll('[data-svc-field]').forEach((el) => {
+      const key = el.dataset.svcField;
+      if (key === 'mode') return;
+      const skipLocal = mode === 'cloud' && ['port', 'python', 'cwd', 'autoStart'].includes(key);
+      const skipCloud = mode === 'local' && key.startsWith('cloud.');
+      if (skipLocal || skipCloud) return;
+      if (key.startsWith('cloud.')) {
+        if (!patch.cloud) patch.cloud = {};
+        const sub = key.slice('cloud.'.length);
+        if (el.type === 'password' && !el.value.trim()) return;
+        patch.cloud[sub] = el.value.trim();
+        return;
+      }
+      if (key === 'autoStart') patch[key] = el.checked;
+      else if (key === 'port') patch[key] = Number(el.value) || 0;
+      else patch[key] = el.value.trim();
+    });
+    return api.config.setService(id, patch);
+  });
+  const results = await Promise.all(tasks);
+  const failed = results.find((res) => !res.ok);
+  if (failed) throw new Error(failed.error);
+  state.services = await call(api.services.list(), '读取服务');
+  return rows.length;
+}
+
 /* ================= 服务进程参数 ================= */
 function renderServiceSettings() {
   const holder = $('service-settings');
@@ -1297,13 +1330,15 @@ $('cloud-deploy-list').addEventListener('click', async (event) => {
 $('btn-settings-save').addEventListener('click', async () => {
   try {
     const skipped = await saveControls($('settings-groups'));
+    const svcCount = await saveAllServiceRows();
     renderSettingsGroups();
     renderServiceSettings();
     renderModelForm();
     renderKpis();
     state.stream = await call(api.stream.status(), '读取推流状态');
     renderStream();
-    toast(skipped ? '设置已保存（API Key 未改动）' : '设置已保存', 'success');
+    const hint = skipped ? `（${skipped} 个空密码未改动）` : '';
+    toast(`设置已保存（含 ${svcCount} 个服务卡）${hint}`, 'success');
   } catch (err) {
     toast(`保存失败: ${err.message}`, 'error');
   }
