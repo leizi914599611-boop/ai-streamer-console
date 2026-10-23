@@ -13,26 +13,9 @@ const { EventEmitter } = require('events');
 
 const ALIYUN_PIP = 'https://mirrors.aliyun.com/pypi/simple/';
 
-/** 组件路径说明：rel 相对项目根；abs 取服务配置里的绝对路径（外部 conda 环境等） */
+/** 组件路径说明：rel 相对项目根 */
 function componentPaths(comp, ctx) {
   if (comp.rel) return comp.rel.map((p) => path.join(ctx.appDir, p));
-  if (comp.from === 'cwd') {
-    // 服务 cwd + 入口脚本（args[0] 为 .py 时）
-    const spec = ctx.spec;
-    if (!spec || !spec.cwd) return [];
-    const first = (spec.args && spec.args[0]) || '';
-    const entry = /\.py$/i.test(first) ? path.join(ctx.config.resolvePath(spec.cwd), first) : ctx.config.resolvePath(spec.cwd);
-    return [entry];
-  }
-  if (comp.from === 'python') {
-    return ctx.spec && ctx.spec.python ? [ctx.config.resolvePath(ctx.spec.python)] : [];
-  }
-  if (comp.from === 'soulxWeights') {
-    // 权重路径相对 soulx.repoDir（可为外部目录）
-    const repoDir = ctx.config.resolvePath(ctx.config.get('soulx.repoDir', ''));
-    const rel = ctx.config.get(comp.key, '');
-    return repoDir && rel ? [path.join(repoDir, rel)] : [];
-  }
   return [];
 }
 
@@ -70,12 +53,11 @@ const MANIFESTS = [
     id: 'latentsync',
     name: 'LatentSync 口型驱动',
     serviceId: 'latentsync',
-    dynamic: true,
     components: [
-      { id: 'repo', label: '仓库（按当前配置）', from: 'cwd' },
-      { id: 'env', label: 'Python 环境（按当前配置）', from: 'python' }
+      { id: 'repo', label: '仓库', rel: ['tools/LatentSync/gradio_app.py'] },
+      { id: 'env', label: 'Python 环境', rel: ['tools/lsenv/python.exe'] },
+      { id: 'weights', label: '权重', rel: ['tools/LatentSync/checkpoints/latentsync_unet.pt', 'tools/LatentSync/checkpoints/syncnet.pt'] }
     ],
-    // 下载完成后把服务配置指向项目内 tools/ 路径
     configPatch: {
       service: {
         cwd: 'tools/LatentSync',
@@ -88,12 +70,11 @@ const MANIFESTS = [
     id: 'svs',
     name: 'SoulX-Singer 歌声合成',
     serviceId: 'svs',
-    dynamic: true,
     script: 'soulx',
     components: [
-      { id: 'repo', label: '仓库（按当前配置）', from: 'cwd' },
-      { id: 'env', label: 'Python 环境（按当前配置）', from: 'python' },
-      { id: 'weights', label: 'SVS 权重', from: 'soulxWeights', key: 'soulx.modelPath' }
+      { id: 'repo', label: '仓库', rel: ['tools/SoulX-Singer/webui.py'] },
+      { id: 'env', label: 'Python 环境', rel: ['tools/soulxenv/python.exe'] },
+      { id: 'weights', label: 'SVS 权重', rel: ['tools/SoulX-Singer/pretrained_models/SoulX-Singer/model.pt'] }
     ],
     configPatch: {
       service: {
@@ -112,12 +93,11 @@ const MANIFESTS = [
     id: 'svc',
     name: 'SoulX-Singer 音色转换',
     serviceId: 'svc',
-    dynamic: true,
     script: 'soulx',
     components: [
-      { id: 'repo', label: '仓库（按当前配置）', from: 'cwd' },
-      { id: 'env', label: 'Python 环境（按当前配置）', from: 'python' },
-      { id: 'weights', label: 'SVC 权重', from: 'soulxWeights', key: 'soulx.svcModelPath' }
+      { id: 'repo', label: '仓库', rel: ['tools/SoulX-Singer/webui_svc.py'] },
+      { id: 'env', label: 'Python 环境', rel: ['tools/soulxenv/python.exe'] },
+      { id: 'weights', label: 'SVC 权重', rel: ['tools/SoulX-Singer/pretrained_models/SoulX-Singer/model-svc.pt'] }
     ],
     configPatch: {
       service: {
